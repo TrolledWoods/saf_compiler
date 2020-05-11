@@ -1,0 +1,4 @@
+Hello type Gift = {
+	gift: *Gift,
+	total_money: f32,
+};
