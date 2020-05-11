@@ -33,6 +33,7 @@ pub enum TypeExpression {
     NamedCollection(Vec<(TinyString, TypeExpression, Option<Expression>)>),
     UnnamedCollection(Vec<(TypeExpression, Option<Expression>)>),
     Pointer {
+        pos: SourcePos,
         mutable: bool,
         nullable: bool,
         pointing_to: Box<TypeExpression>,

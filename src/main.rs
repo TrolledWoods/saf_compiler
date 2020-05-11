@@ -6,7 +6,6 @@
 #[macro_use]
 extern crate lazy_static;
 
-mod keyword;
 mod tiny_string;
 mod parser;
 
@@ -19,7 +18,7 @@ fn main() {
     parser::parse_file(
         "src.saf", 
         &counter,
-        |compilation_unit| println!("{:?}", compilation_unit),
+        |compilation_unit| println!("{:#?}", compilation_unit),
     ).unwrap();
 }
 

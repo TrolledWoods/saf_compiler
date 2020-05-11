@@ -1,4 +1,1 @@
-Hello type Gift = {
-	gift: *Gift,
-	total_money: f32,
-};
+type Hello = *mut Hello;
