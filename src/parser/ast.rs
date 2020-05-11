@@ -28,6 +28,14 @@ pub enum Expression {
     },
 }
 
+#[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
+pub enum PrimitiveKind {
+    Float32,
+    Float64,
+    Int32,
+    Int64,
+}
+
 #[derive(Debug)]
 pub enum TypeExpression {
     NamedCollection(Vec<(TinyString, TypeExpression, Option<Expression>)>),
@@ -51,5 +59,9 @@ pub enum TypeExpression {
         pos: SourcePos,
         namespace_id: u32, 
         name: TinyString,
+    },
+    Primitive {
+        pos: SourcePos,
+        kind: PrimitiveKind,
     },
 }

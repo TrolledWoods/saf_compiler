@@ -8,6 +8,7 @@ extern crate lazy_static;
 
 mod tiny_string;
 mod parser;
+mod compile;
 
 use std::sync::atomic::{ AtomicU32, Ordering };
 

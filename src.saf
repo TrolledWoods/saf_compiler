@@ -1,1 +1,8 @@
-type Hello = *mut Hello;
+type Hello  = *null Hello;
+type Hello2 = *Hello;
+
+
+
+// const pointer: *null f32 = to<f32> *   null;
+// * (mut)      -> * (mut) null
+// * mut (null) -> * (null)

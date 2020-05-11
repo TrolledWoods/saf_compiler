@@ -203,8 +203,6 @@ fn parse_type(
                 name,
             })
         }
-        Keyword(KeywordKind::Null) | 
-        Keyword(KeywordKind::Mutable) |
         Operator("*") => 
             parse_pointer(parser, namespace_id),
         _ => Err(ParseError::InvalidToken {
@@ -223,36 +221,50 @@ fn parse_pointer(
     let start = token.start;
     match token.kind {
         Operator("*") => (),
-        _ => return Err(ParseError::InvalidToken {
-            pos: token.pos(parser.file()),
-            kind: token.kind,
-            message: format!(
-                "'null' or 'mut' keywords in a \
-                type are always before a pointer, \
-                but there is no '*' here"),
-        }),
+        _ => unreachable!(
+            "Shouldn't call parse_pointer \
+            function without having a \
+            pointer operator"
+        ),
     }
 
     use TokenKind::*;
     let token = parser.expect_peek_token(0)?;
     let start = token.start;
 
-    let mut mutable = try_parse_kind(
-        parser,
-        Keyword(KeywordKind::Mutable),
-    )?;
-
-    let nullable = try_parse_kind(
-        parser,
-        Keyword(KeywordKind::Null),
-    )?;
-
-    // Make the keywords order independant
-    if !mutable {
-        mutable = try_parse_kind(
-            parser,
-            Keyword(KeywordKind::Mutable),
-        )?;
+    let mut mutable = false;
+    let mut nullable = false;
+    loop {
+        let token = parser.expect_peek_token(0)?;
+        match (&token.kind, mutable, nullable) {
+            (&Keyword(KeywordKind::Mutable), false, _) => {
+                parser.expect_eat_token().unwrap();
+                mutable = true;
+            }
+            (&Keyword(KeywordKind::Mutable), true, _) =>
+                return Err(ParseError::InvalidToken {
+                    pos: token.pos(parser.file()),
+                    kind: token.kind,
+                    message: format!(
+                        "Got a second ``mut`` modifier \
+                        for a pointer, but one is enough"
+                    ),
+                }),
+            (&Keyword(KeywordKind::Null), _, false) => {
+                parser.expect_eat_token().unwrap();
+                nullable = true;
+            }
+            (&Keyword(KeywordKind::Null), _, true) =>
+                return Err(ParseError::InvalidToken {
+                    pos: token.pos(parser.file()),
+                    kind: token.kind,
+                    message: format!(
+                        "Got a second ``null`` modifier \
+                            for a pointer, but one is enough"
+                    ),
+                }),
+            _ => break,
+        }
     }
 
     let internal = parse_type(
