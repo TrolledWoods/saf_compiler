@@ -11,7 +11,7 @@ mod vec_top;
 mod parser;
 mod compile;
 
-use std::sync::atomic::{ AtomicU32, Ordering };
+use std::sync::atomic::{ AtomicUsize, Ordering };
 
 fn main() {
     let counter = IdCounter::new();
@@ -23,33 +23,44 @@ fn main() {
             use parser::CompilationUnit::*;
             match compilation_unit {
                 TypeDefinition {
-                    definition,
+                    namespace_id,
                     name,
+                    definition,
                     ..
                 } => {
-                    let unit = compile::resolve_type(
+                    compile::add_named_type(
                         &compiler,
-                        &definition,
-                    );
-                    println!(
-                        "type {} = {:#?}", 
-                        name.name, 
-                        unit
-                        );
+                        namespace_id,
+                        name,
+                        definition,
+                    ).unwrap();
                 }
             }
         },
     ).unwrap();
+
+    compile::compile_ready(
+        &compiler,
+    ).unwrap();
+
+    match compile::finish(compiler) {
+        Ok(result) => println!("Finished compilation!"),
+        Err(errors) => {
+            for error in errors {
+                println!("Error: {:#?}", error);
+            }
+        }
+    }
 }
 
-pub struct IdCounter(AtomicU32);
+pub struct IdCounter(AtomicUsize);
 
 impl IdCounter {
     pub fn new() -> IdCounter {
-        IdCounter(AtomicU32::new(0))
+        IdCounter(AtomicUsize::new(0))
     }
 
-    pub fn create_id(&self) -> u32 {
+    pub fn create_id(&self) -> usize {
         self.0.fetch_add(1, Ordering::SeqCst)
     }
 }

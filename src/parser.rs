@@ -63,7 +63,7 @@ impl Parser<'_> {
 pub enum CompilationUnit {
     TypeDefinition {
         pos: SourcePos,
-        namespace_id: u32,
+        namespace_id: usize,
         name: Identifier,
         definition: TypeExpression,
     },
@@ -76,7 +76,7 @@ pub fn parse_file(
     path: &str,
     ids: &IdCounter,
     mut add_comp_unit: impl FnMut(CompilationUnit),
-) -> Result<u32, ParseError> {
+) -> Result<usize, ParseError> {
     // Create the lexer
     let file = std::fs::read_to_string(path)?;
     let mut parser = Parser {
@@ -114,7 +114,7 @@ Type definitions have the form
 /// ``type [identifier] = [parse_type];``
 fn parse_type_def(
     parser: &mut Parser<'_>,
-    namespace_id: u32,
+    namespace_id: usize,
 ) -> Result<CompilationUnit, ParseError> {
     let pos = parse_kind(
         parser,
@@ -188,7 +188,7 @@ fn parse_identifier(
 /// Parses any type.
 fn parse_type(
     parser: &mut Parser<'_>,
-    namespace_id: u32,
+    namespace_id: usize,
 ) -> Result<TypeExpression, ParseError> {
     let token = parser.expect_peek_token(0)?;
 
@@ -235,7 +235,7 @@ fn parse_type(
 
 fn parse_pointer(
     parser: &mut Parser<'_>,
-    namespace_id: u32,
+    namespace_id: usize,
 ) -> Result<TypeExpression, ParseError> {
     let token = parser.expect_eat_token()?;
     let start = token.start;

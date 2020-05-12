@@ -5,7 +5,7 @@ use crate::tiny_string::TinyString;
 pub enum Expression {
     NamedValue {
         pos: SourcePos,
-        namespace_id: u32,
+        namespace_id: usize,
         name: TinyString,
     },
     Block {
@@ -57,7 +57,7 @@ pub enum TypeExpression {
     },
     NamedType {
         pos: SourcePos,
-        namespace_id: u32, 
+        namespace_id: usize, 
         name: TinyString,
     },
     Primitive {

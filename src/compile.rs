@@ -1,4 +1,4 @@
-use std::sync::{ RwLock, RwLockReadGuard };
+use std::sync::{ Mutex, RwLock, RwLockReadGuard };
 use std::collections::HashMap;
 use std::mem::drop;
 use crate::tiny_string::TinyString;
@@ -22,6 +22,7 @@ pub struct Compiler {
     named_types: RwLock<Vec<TypeUnit>>,
     resolved_types: RwLock<Vec<ResolvedType>>,
 
+    ready_to_compile: Mutex<Vec<CompileMemberId>>,
     namespaces: Namespaces,
 }
 
@@ -42,8 +43,37 @@ impl Compiler {
             named_types: RwLock::new(Vec::new()),
             resolved_types: RwLock::new(types),
             namespaces: Namespaces::new(),
+            ready_to_compile: Mutex::new(Vec::new()),
         }
     }
+}
+
+/// Compiles things that are "ready for compilation"
+/// until there are no more thing that are ready
+pub fn compile_ready(
+    compiler: &Compiler
+) -> Result<(), CompileError> {
+    while let Some(compile_member_id) 
+        = compiler.ready_to_compile.lock().unwrap().pop() {
+
+        use CompileMemberId::*;
+        match compile_member_id {
+            // Cannot compile it anyway
+            Poison => (),
+            NamedType(id) => {
+                
+            }
+            Constant(id) => unimplemented!("TODO: Constants"),
+        }
+    }
+
+    Ok(())
+}
+
+pub fn finish(
+    compiler: Compiler
+) -> Result<String, Vec<CompileError>> {
+    Ok(format!("Yay!"))
 }
 
 /// Returns the type id of a resolved type.
@@ -113,6 +143,7 @@ pub fn add_named_type(
 
     Ok(named_type_id as usize)
 }
+
 
 type CompileResult<T> = Result<T, CompileError>;
 
