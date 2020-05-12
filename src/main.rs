@@ -12,18 +12,33 @@ mod compile;
 
 use std::sync::atomic::{ AtomicU32, Ordering };
 
-pub type CompileResult<T> = Result<T, CompileError>;
-
 fn main() {
     let counter = IdCounter::new();
+    let compiler = compile::Compiler::new();
     parser::parse_file(
         "src.saf", 
         &counter,
-        |compilation_unit| println!("{:#?}", compilation_unit),
+        |compilation_unit| {
+            use parser::CompilationUnit::*;
+            match compilation_unit {
+                TypeDefinition {
+                    definition,
+                    name,
+                    ..
+                } => {
+                    let unit = compile::resolve_type(
+                        &compiler,
+                        &definition,
+                    );
+                    println!(
+                        "type {} = {:#?}", 
+                        name.name, 
+                        unit
+                        );
+                }
+            }
+        },
     ).unwrap();
-}
-
-pub enum CompileError {
 }
 
 pub struct IdCounter(AtomicU32);

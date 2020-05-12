@@ -1,5 +1,8 @@
-type Hello  = *null Hello;
-type Hello2 = *Hello;
+type Hello1 = f32;
+type Hello3 = f64;
+type Hello5 = i32;
+type Hello2 = *null i64;
+// type Hello2 = *Hello;
 
 
 

@@ -64,4 +64,10 @@ pub enum TypeExpression {
         pos: SourcePos,
         kind: PrimitiveKind,
     },
+    /// A unique type is special.
+    /// A unique type will become its own type,
+    /// no matter what the contents are. This is
+    /// needed to allow for named types that aren't
+    /// aliases.
+    UniqueType(Box<TypeExpression>),
 }

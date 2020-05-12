@@ -9,7 +9,7 @@ use lexer::{
     Lexer, 
     LexerError 
 };
-use ast::{ TypeExpression };
+use ast::{ PrimitiveKind, TypeExpression };
 use crate::IdCounter;
 use keyword::Keyword as KeywordKind;
 use crate::tiny_string::TinyString;
@@ -197,11 +197,31 @@ fn parse_type(
         Identifier(name) => {
             // A named type(or a primitive)
             parser.eat_token()?;
-            Ok(TypeExpression::NamedType {
-                pos: token.pos(parser.file()),
-                namespace_id,
-                name,
-            })
+
+            let primitive = {
+                use PrimitiveKind::*;
+                let name = name.read();
+                match &*name {
+                    "f32" => Some(Float32),
+                    "f64" => Some(Float64),
+                    "i32" => Some(Int32),
+                    "i64" => Some(Int64),
+                    _ => None,
+                }
+            };
+
+            if let Some(primitive) = primitive {
+                Ok(TypeExpression::Primitive {
+                    pos: token.pos(parser.file()),
+                    kind: primitive,
+                })
+            } else {
+                Ok(TypeExpression::NamedType {
+                    pos: token.pos(parser.file()),
+                    namespace_id,
+                    name,
+                })
+            }
         }
         Operator("*") => 
             parse_pointer(parser, namespace_id),
