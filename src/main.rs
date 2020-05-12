@@ -7,6 +7,7 @@
 extern crate lazy_static;
 
 mod tiny_string;
+mod vec_top;
 mod parser;
 mod compile;
 

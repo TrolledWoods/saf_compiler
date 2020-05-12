@@ -2,8 +2,8 @@ mod lexer;
 mod keyword;
 pub mod ast;
 
+pub use lexer::SourcePos;
 use lexer::{ 
-    SourcePos, 
     TokenKind, 
     Token, 
     Lexer, 
