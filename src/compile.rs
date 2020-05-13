@@ -18,6 +18,18 @@ const FLOAT_64_ID: usize = 1;
 const INT_32_ID: usize   = 2;
 const INT_64_ID: usize   = 3;
 
+/// Wether or not debug information should be
+/// printed.
+pub const DEBUG: bool = true;
+
+macro_rules! debug {
+    ($($tokens:tt)*) => {{ 
+        if crate::compile::DEBUG {
+            println!($($tokens)*);
+        }
+    }}
+} 
+
 pub struct Compiler {
     named_types: RwLock<Vec<TypeUnit>>,
     resolved_types: RwLock<Vec<ResolvedType>>,
@@ -61,9 +73,10 @@ pub fn compile_ready(
             // Cannot compile it anyway
             Poison => (),
             NamedType(id) => {
-                
+                try_resolve_type_unit(compiler, id)?;
             }
-            Constant(id) => unimplemented!("TODO: Constants"),
+            Constant(id) => 
+                unimplemented!("TODO: Constants"),
         }
     }
 
@@ -113,6 +126,7 @@ pub fn add_named_type(
     named_types.push(TypeUnit {
         definition,
         resolved: RwLock::new(None),
+        resolved_deps: Mutex::new(Vec::new()),
     });
     drop(named_types);
 
@@ -150,7 +164,7 @@ type CompileResult<T> = Result<T, CompileError>;
 #[derive(Debug)]
 pub enum CompileError {
     Poison,
-    DependencyNotReady(CompileMemberId),
+    DependencyNotReady(Dependency),
     Namespace(NamespaceError),
 }
 
@@ -188,6 +202,70 @@ pub enum ResolvedType {
     /// as the same time.
     WrappedType(usize),
     Primitive(PrimitiveKind),
+}
+
+pub fn add_dependency(
+    compiler: &Compiler,
+    to: Dependency,
+    dependant: CompileMemberId,
+) {
+    use Dependency::*;
+    match to {
+        _ => unimplemented!()
+    }
+}
+
+/// Will try to resolve a type unit.
+/// If it's not possible for some reason,
+/// it will either add a dependency and try again
+/// once resolved, or if not recoverable, it will
+/// produce a CompileError.
+pub fn try_resolve_type_unit(
+    compiler: &Compiler,
+    type_unit_id: usize,
+) -> Result<Option<usize>, CompileError> {
+    let type_units = compiler.named_types.read().unwrap();
+
+    match resolve_type(
+        compiler,
+        &type_units[type_unit_id].definition,
+    ) {
+        Ok(resolved_id) => {
+            // This may seem like a logical datarace,
+            // but it's fine, because even if it is a
+            // "data race", we should be setting the
+            // value to the same thing in both cases,
+            // so it should be fine anyway.
+            let mut resolved = 
+                type_units[type_unit_id]
+                    .resolved
+                    .write()
+                    .unwrap();
+            *resolved = Some(resolved_id);
+            
+            debug!(
+                "Resolved type unit {:?} to {}", 
+                type_unit_id,
+                resolved_id
+            );
+
+            Ok(Some(resolved_id))
+        }
+        Err(
+            CompileError::DependencyNotReady(
+                depending_on_id
+            )
+        ) => {
+            add_dependency(
+                compiler,
+                depending_on_id,
+                CompileMemberId::NamedType(type_unit_id),
+            );
+
+            Ok(None)
+        }
+        Err(err) => Err(err)
+    }
 }
 
 pub fn resolve_type(
@@ -250,6 +328,10 @@ fn resolve_type_req(
     }
 }
 
+#[derive(Debug)]
+pub enum Dependency {
+    SizedTypeUnit(usize),
+}
 
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum CompileMemberId {
@@ -273,5 +355,6 @@ struct TypeUnit {
     /// things other parts of the compiler read before,
     /// so it's not a good idea to do so.
     resolved: RwLock<Option<usize>>,
+    resolved_deps: Mutex<Vec<CompileMemberId>>,
 }
 

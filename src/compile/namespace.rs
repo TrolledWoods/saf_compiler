@@ -4,11 +4,13 @@ use crate::compile::CompileMemberId;
 use std::collections::HashMap;
 use std::sync::RwLock;
 
+struct NamespaceMember {
+    pos: SourcePos,
+    data: CompileMemberId,
+}
+
 pub struct Namespaces {
-    members: RwLock<HashMap<
-        TinyString, 
-        (SourcePos, CompileMemberId)
-    >>,
+    members: RwLock<HashMap<TinyString, NamespaceMember>>,
 }
 
 impl Namespaces {
@@ -22,22 +24,27 @@ impl Namespaces {
         &self,
         namespace_id: usize,
         name: Identifier,
-        member: CompileMemberId,
+        member_id: CompileMemberId,
     ) -> Result<(), NamespaceError> {
         let mut members = self.members.write().unwrap();
         let old_member = members.insert(
             name.name, 
-            (name.pos.clone(), member),
+            NamespaceMember {
+                pos: name.pos.clone(),
+                data: member_id,
+            }
         );
 
         // Is it ambiguous?
-        if let Some((old_pos, old_id)) = old_member {
+        if let Some(
+            NamespaceMember { pos: old_pos, data: old_id, .. }
+        ) = old_member {
             members.insert(
                 name.name, 
-                (
-                    name.pos.clone(), 
-                    CompileMemberId::Poison
-                ),
+                NamespaceMember {
+                    pos: name.pos.clone(),
+                    data: CompileMemberId::Poison,
+                }
             );
 
             if let CompileMemberId::Poison = old_id {
@@ -53,6 +60,7 @@ impl Namespaces {
                 })
             }
         }else {
+            println!("Namespace; '{}': {:?}", name.name, member_id);
             Ok(())
         }
     }
@@ -66,7 +74,7 @@ impl Namespaces {
             .read()
             .unwrap()
             .get(&name)
-            .map(|(_, member)| *member)
+            .map(|member| member.data)
     }
 }
 
