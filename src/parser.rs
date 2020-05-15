@@ -9,7 +9,7 @@ use lexer::{
     Lexer, 
     LexerError 
 };
-use ast::{ PrimitiveKind, TypeExpression };
+use ast::{ PrimitiveKind, TypeExpression, Expression };
 use crate::IdCounter;
 use keyword::Keyword as KeywordKind;
 use crate::tiny_string::TinyString;
@@ -30,7 +30,7 @@ impl Parser<'_> {
     fn expect_peek_token(
         &mut self, 
         n_forward: usize,
-    ) -> Result<Token, ParseError> {
+    ) -> ParseResult<Token> {
         Ok(
             self.lexer
                 .peek_token(n_forward)?
@@ -42,7 +42,7 @@ impl Parser<'_> {
 
     fn expect_eat_token(
         &mut self,
-    ) -> Result<Token, ParseError> {
+    ) -> ParseResult<Token> {
         Ok(
             self.lexer
                 .eat_token()?
@@ -54,8 +54,15 @@ impl Parser<'_> {
 
     fn eat_token(
         &mut self,
-    ) -> Result<Option<Token>, ParseError> {
+    ) -> ParseResult<Option<Token>> {
         Ok(self.lexer.eat_token()?)
+    }
+
+    fn peek_token(
+        &mut self, 
+        n_forward: usize,
+    ) -> ParseResult<Option<Token>> {
+        Ok(self.lexer.peek_token(n_forward)?)
     }
 }
 
@@ -77,7 +84,7 @@ pub fn parse_file(
     path: &str,
     ids: &IdCounter,
     mut add_comp_unit: impl FnMut(CompilationUnit),
-) -> Result<usize, ParseError> {
+) -> ParseResult<usize> {
     // Create the lexer
     let file = std::fs::read_to_string(path)?;
     let mut parser = Parser {
@@ -117,7 +124,7 @@ Type definitions have the form
 fn parse_type_def(
     parser: &mut Parser<'_>,
     namespace_id: usize,
-) -> Result<CompilationUnit, ParseError> {
+) -> ParseResult<CompilationUnit> {
     let token = parser.expect_eat_token()?;
     let (is_unique, pos) = match token {
         Token {
@@ -171,6 +178,77 @@ fn parse_type_def(
         definition,
         is_unique,
     })
+}
+
+fn parse_collection(
+    parser: &mut Parser<'_>,
+    namespace_id: usize,
+) -> ParseResult<Vec<(
+    TinyString, 
+    TypeExpression, 
+    Option<Expression>
+)>> {
+    let pos = parse_kind(
+        parser, 
+        TokenKind::Bracket('{'),
+        |_| unreachable!("Don't call the parse_collection when there is not a bracket token beforehand!"),
+        )?;
+
+    let mut collection = Vec::new();
+    let mut unnamed_ctr = 0;
+    loop {
+        // Is the termination already here?
+        if try_parse_kind(
+            parser,
+            TokenKind::Bracket('}'),
+        )? {
+            break;
+        }
+
+        // Get/Generate the name
+        let token = parser.expect_peek_token(0)?;
+        let (pos, name) = match (
+            &token.kind,
+            parser.peek_token(1)?.map(|v| v.kind),
+        ) {
+            (
+                &TokenKind::Identifier(name),
+                Some(TokenKind::Declaration),
+            ) => {
+                let pos = parser.expect_eat_token()?
+                    .pos(parser.file());
+                parser.expect_eat_token()?;
+
+                (pos, name)
+            }
+            (_, _) => {
+                unnamed_ctr += 1;
+                (
+                    token.pos(parser.file()), 
+                    format!("{}", unnamed_ctr - 1).into()
+                )
+            }
+        };
+
+        let type_ = parse_type(parser, namespace_id)?;
+
+        collection.push((name, type_, None));
+
+        if try_parse_kind(
+            parser,
+            TokenKind::Bracket('}'),
+        )? {
+            break;
+        } else {
+            parse_kind(
+                parser,
+                TokenKind::Separator,
+                |_| format!("Expected ',' or ';'"),
+            )?;
+        }
+    }
+
+    Ok(collection)
 }
 
 /// Parses an identifier.
@@ -239,6 +317,11 @@ fn parse_type(
         }
         Operator("*") => 
             parse_pointer(parser, namespace_id),
+        Bracket('{') => {
+            Ok(TypeExpression::NamedCollection(
+                parse_collection(parser, namespace_id)?
+            ))
+        }
         _ => Err(ParseError::InvalidToken {
             pos: token.pos(parser.file()),
             kind: token.kind,
@@ -352,6 +435,8 @@ pub struct Identifier {
     pub pos: SourcePos,
     pub name: TinyString,
 }
+
+type ParseResult<T> = Result<T, ParseError>;
 
 #[derive(Debug)]
 pub enum ParseError {

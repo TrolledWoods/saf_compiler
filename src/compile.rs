@@ -211,7 +211,7 @@ pub fn add_named_type(
     ) {
         Ok(value) => {
             debug!(
-                "Resolved type unit {:?} to {:#?}", 
+                "Resolved type unit {:?} to {}", 
                 named_type_id,
                 value,
             );
@@ -277,7 +277,7 @@ pub enum ResolvedType {
     Circular { 
         type_unit_id: usize,
     },
-    Collection(Vec<(TinyString, Box<ResolvedType>)>),
+    Collection(Vec<(TinyString, ResolvedType)>),
     /// Just a pointer to some other type
     Pointer {
         nullable: bool,
@@ -502,6 +502,20 @@ fn resolve_type_req(
                 unique_id,
                 Box::new(internal)
             ))
+        }
+        NamedCollection(members) => {
+            let mut resolved_members = 
+                Vec::with_capacity(members.len());
+            for (name, type_, _default) in members {
+                let member = resolve_type_req(
+                    compiler,
+                    type_,
+                    reqursion_guard.temp_clone(),
+                )?;
+                resolved_members.push((*name, member));
+            }
+
+            Ok(ResolvedType::Collection(resolved_members))
         }
         _ => unimplemented!(),
     }
