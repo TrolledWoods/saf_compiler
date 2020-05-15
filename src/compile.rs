@@ -37,7 +37,7 @@ macro_rules! debug {
 
 pub struct Compiler {
     named_types: RwLock<Vec<TypeUnit>>,
-    resolved_types: RwLock<Vec<TypeDef>>,
+    type_definitions: RwLock<Vec<TypeDef>>,
     unique_type_ctr: AtomicUsize,
 
     ready_to_compile: Mutex<Vec<CompileMemberId>>,
@@ -59,7 +59,7 @@ impl Compiler {
 
         Compiler {
             named_types: RwLock::new(Vec::new()),
-            resolved_types: RwLock::new(types),
+            type_definitions: RwLock::new(types),
             namespaces: Namespaces::new(),
             ready_to_compile: Mutex::new(Vec::new()),
             unique_type_ctr: AtomicUsize::new(0),
@@ -93,7 +93,7 @@ pub fn compile_ready(
             Poison => (),
             NamedType(id) => {
                 let mut vec = Vec::new();
-                match resolve_type_unit(
+                match calc_type_def(
                     compiler, 
                     id,
                     VecTop::at_top(&mut vec),
@@ -145,28 +145,28 @@ pub fn finish(
     Ok(format!("Yay!"))
 }
 
-/// Returns the type id of a resolved type.
+/// Returns the type id of a type definition.
 /// There is one and exactly one type id for 
 /// every kind of type(except unique types, 
 /// who have a unique identifier). If there is already
 /// an index, we return that, if not, we create
 /// a new type id and return that.
-pub fn type_id(
-    resolved_types: &mut Vec<TypeDef>,
+pub fn calc_type_id(
+    type_definitions: &mut Vec<TypeDef>,
     index_of: &TypeDef,
 ) -> usize {
     for (
         i, 
         old_type,
-    ) in resolved_types.iter().enumerate() {
+    ) in type_definitions.iter().enumerate() {
         if old_type == index_of {
             return i as usize;
         }
     }
 
-    let id = resolved_types.len() as usize;
+    let id = type_definitions.len() as usize;
     println!("Added type id {}: {:#?}", id, index_of);
-    resolved_types.push(index_of.clone());
+    type_definitions.push(index_of.clone());
 
     id
 }
@@ -202,12 +202,12 @@ pub fn add_named_type(
         compiler.add_ready_to_compile(dependant);
     }
 
-    // Try to resolve the type unit.
+    // Try to get the type definition
     // If any of the dependencies are not defined,
     // it will wait until(if) that dependency
     // is defined.
     let mut req_guard = Vec::new();
-    match resolve_type_unit(
+    match calc_type_def(
         compiler,
         named_type_id,
         VecTop::at_top(&mut req_guard)
@@ -269,7 +269,7 @@ impl From<NamespaceError> for CompileError {
     }
 }
 
-fn resolve_type_unit(
+fn calc_type_def(
     compiler: &Compiler,
     type_unit_id: usize,
     mut reqursion_guard: VecTop<'_, CompileMemberId>,
@@ -302,7 +302,7 @@ fn resolve_type_unit(
     );
 
     let unique_type_id = type_units[type_unit_id].unique_type_id;
-    match resolve_type_req(
+    match calc_type_def_req(
         compiler,
         &type_units[type_unit_id].definition,
         reqursion_guard.temp_clone(),
@@ -323,19 +323,6 @@ fn resolve_type_unit(
     }
 }
 
-pub fn resolve_type(
-    compiler: &Compiler,
-    resolving: &TypeExpression,
-) -> Result<TypeDef, CompileError> {
-    let namespaces = &compiler.namespaces;
-    let mut reqursion_guard = Vec::new();
-    resolve_type_req(
-        compiler, 
-        resolving, 
-        VecTop::at_top(&mut reqursion_guard)
-    )
-}
-
 /// ``reqursion_guard`` parameter:
 /// The values inside the VecTop are types 
 /// who will cause an infinite loop
@@ -343,7 +330,7 @@ pub fn resolve_type(
 /// parent vector are behind pointers and do not cause
 /// infinite sizing loops, but should still not
 /// be recursed into.
-fn resolve_type_req(
+fn calc_type_def_req(
     compiler: &Compiler,
     resolving: &TypeExpression,
     mut reqursion_guard: VecTop<'_, CompileMemberId>,
@@ -356,7 +343,7 @@ fn resolve_type_req(
         Pointer {
             mutable, nullable, pointing_to, ..
         } => {
-            let pointing_to = resolve_type_req(
+            let pointing_to = calc_type_def_req(
                 compiler,
                 pointing_to,
                 reqursion_guard.top(),
@@ -391,7 +378,7 @@ fn resolve_type_req(
                 CompileMemberId::Poison =>
                     return Err(CompileError::Poison),
                 CompileMemberId::NamedType(other_id) => {
-                    Ok(resolve_type_unit(
+                    Ok(calc_type_def(
                         compiler,
                         other_id,
                         reqursion_guard,
@@ -407,7 +394,7 @@ fn resolve_type_req(
         }
         UniqueType(internal) => {
             let unique_id = compiler.add_unique_type();
-            let internal = resolve_type_req(
+            let internal = calc_type_def_req(
                 compiler,
                 internal,
                 reqursion_guard.top(),
@@ -422,7 +409,7 @@ fn resolve_type_req(
             let mut resolved_members = 
                 Vec::with_capacity(members.len());
             for (name, type_, _default) in members {
-                let member = resolve_type_req(
+                let member = calc_type_def_req(
                     compiler,
                     type_,
                     reqursion_guard.temp_clone(),
