@@ -89,12 +89,8 @@ pub fn compile_ready(
             Poison => (),
             NamedType(id) => {
                 let mut vec = Vec::new();
-                let mut resolved_types = 
-                    compiler.resolved_types
-                    .write().unwrap();
                 match resolve_type_unit(
                     compiler, 
-                    &mut *resolved_types,
                     id,
                     VecTop::at_top(&mut vec),
                 ) {
@@ -192,12 +188,9 @@ pub fn add_named_type(
     // If any of the dependencies are not defined,
     // it will wait until(if) that dependency
     // is defined.
-    let mut resolved_types = 
-        compiler.resolved_types.write().unwrap();
     let mut req_guard = Vec::new();
     match resolve_type_unit(
         compiler,
-        &mut *resolved_types,
         named_type_id,
         VecTop::at_top(&mut req_guard)
     ) {
@@ -284,7 +277,6 @@ pub enum ResolvedType {
 
 fn resolve_type_unit(
     compiler: &Compiler,
-    resolved_types: &mut Vec<ResolvedType>,
     type_unit_id: usize,
     mut reqursion_guard: VecTop<'_, CompileMemberId>,
 ) -> Result<ResolvedType, CompileError> {
@@ -316,27 +308,10 @@ fn resolve_type_unit(
 
     match resolve_type_req(
         compiler,
-        resolved_types,
         &type_units[type_unit_id].definition,
         reqursion_guard.temp_clone(),
     ) {
         Ok(resolved_id) => {
-            // TODO: After the tree has been built, then
-            // we can start converting the ResolvedType trees
-            // into indicees.
-            
-            // This may seem like a logical datarace,
-            // but it's fine, because even if it is a
-            // "data race", we should be setting the
-            // value to the same thing in both cases,
-            // so it should be fine anyway.
-            // let mut resolved = 
-            //     type_units[type_unit_id]
-            //         .resolved
-            //         .write()
-            //         .unwrap();
-            // *resolved = Some(resolved_id);
-            
             debug!(
                 "Resolved type unit {:?} to {:#?}", 
                 type_unit_id,
@@ -355,16 +330,10 @@ pub fn resolve_type(
     compiler: &Compiler,
     resolving: &TypeExpression,
 ) -> Result<ResolvedType, CompileError> {
-    let mut resolved_types = 
-        compiler
-        .resolved_types
-        .write()
-        .unwrap();
     let namespaces = &compiler.namespaces;
     let mut reqursion_guard = Vec::new();
     resolve_type_req(
         compiler, 
-        &mut *resolved_types, 
         resolving, 
         VecTop::at_top(&mut reqursion_guard)
     )
@@ -379,7 +348,6 @@ pub fn resolve_type(
 /// be recursed into.
 fn resolve_type_req(
     compiler: &Compiler,
-    resolved_types: &mut Vec<ResolvedType>,
     resolving: &TypeExpression,
     mut reqursion_guard: VecTop<'_, CompileMemberId>,
 ) -> Result<ResolvedType, CompileError> {
@@ -393,7 +361,6 @@ fn resolve_type_req(
         } => {
             let pointing_to = resolve_type_req(
                 compiler,
-                resolved_types,
                 pointing_to,
                 reqursion_guard.top(),
             )?;
@@ -429,7 +396,6 @@ fn resolve_type_req(
                 CompileMemberId::NamedType(other_id) => {
                     Ok(resolve_type_unit(
                         compiler,
-                        resolved_types,
                         other_id,
                         reqursion_guard,
                     )?)
@@ -446,7 +412,6 @@ fn resolve_type_req(
             let unique_id = compiler.add_unique_type();
             let internal = resolve_type_req(
                 compiler,
-                resolved_types,
                 internal,
                 reqursion_guard.top(),
             )?;

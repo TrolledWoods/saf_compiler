@@ -1,3 +1,2 @@
-alias MoreHello = *mut *mut EvenMoreOtherType;
-type MoreHello2 = *mut MoreHello;
-type EvenMoreOtherType = *mut MoreHello2;
+alias Hello  = Hello2;
+alias Hello2 = *Hello;
