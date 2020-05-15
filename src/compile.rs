@@ -14,6 +14,9 @@ use crate::parser::ast::{
 pub mod namespace;
 use namespace::{ Namespaces, NamespaceError };
 
+pub mod type_def;
+use type_def::{ TypeDef };
+
 // We want to know the type id of primitives.
 const FLOAT_32_ID: usize = 0;
 const FLOAT_64_ID: usize = 1;
@@ -34,7 +37,7 @@ macro_rules! debug {
 
 pub struct Compiler {
     named_types: RwLock<Vec<TypeUnit>>,
-    resolved_types: RwLock<Vec<ResolvedType>>,
+    resolved_types: RwLock<Vec<TypeDef>>,
     unique_type_ctr: AtomicUsize,
 
     ready_to_compile: Mutex<Vec<CompileMemberId>>,
@@ -44,7 +47,7 @@ pub struct Compiler {
 impl Compiler {
     pub fn new() -> Compiler {
         let mut types = {
-            use ResolvedType::*;
+            use TypeDef::*;
             use PrimitiveKind::*;
             vec![
                 Primitive(Float32),
@@ -149,8 +152,8 @@ pub fn finish(
 /// an index, we return that, if not, we create
 /// a new type id and return that.
 pub fn type_id(
-    resolved_types: &mut Vec<ResolvedType>,
-    index_of: &ResolvedType,
+    resolved_types: &mut Vec<TypeDef>,
+    index_of: &TypeDef,
 ) -> usize {
     for (
         i, 
@@ -266,102 +269,11 @@ impl From<NamespaceError> for CompileError {
     }
 }
 
-/// A ResolvedType is a type where we know that no
-/// infinite "sizing loops" occur, and where we know
-/// that all the types that the ResolvedType depends
-/// on are also ResolvedType:s.
-/// Also, all constant expressions are calculated
-/// in resolved types.
-#[derive(Clone, Debug, PartialEq, Eq, Hash)]
-pub enum ResolvedType {
-    Circular { 
-        type_unit_id: usize,
-    },
-    Collection(Vec<(TinyString, ResolvedType)>),
-    /// Just a pointer to some other type
-    Pointer {
-        nullable: bool,
-        mutable: bool,
-        pointing_to: Box<ResolvedType>,
-    },
-    VariableArray {
-        mutable: bool,
-        content_type: Box<ResolvedType>,
-    },
-    FixedArray {
-        size: usize,
-        content_type: Box<ResolvedType>,
-    },
-    UniqueType(usize, Box<ResolvedType>),
-    Primitive(PrimitiveKind),
-}
-
-impl fmt::Display for ResolvedType {
-    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
-        use ResolvedType::*;
-        match self {
-            Circular { type_unit_id } => write!(f, "@{}", type_unit_id)?,
-            Collection(members) => {
-                write!(f, "{} ", '{')?;
-                for (i, (name, member)) in members.iter().enumerate() {
-                    if i > 0 {
-                        write!(f, ", ")?;
-                    }
-                    write!(f, "{}: {}", name, member)?;
-                }
-                write!(f, " {}", '}')?;
-            }
-            Pointer {
-                nullable,
-                mutable,
-                pointing_to,
-            } => { 
-                write!(f, "*")?;
-                if *nullable { write!(f, "null ")?; }
-                if *mutable  { write!(f, "mut ")?; }
-                write!(f, "{}", pointing_to)?;
-            }
-            VariableArray {
-                mutable,
-                content_type,
-            } => {
-                if *mutable {
-                    write!(f, "[?] ")?;
-                } else {
-                    write!(f, "[-] ")?;
-                }
-
-                write!(f, "{}", content_type)?;
-            }
-            FixedArray {
-                size,
-                content_type,
-            } => {
-                write!(f, "[{}] {}", size, content_type)?;
-            }
-            UniqueType(id, internal) => {
-                write!(f, "${} {}", id, internal)?;
-            }
-            Primitive(primitive) => {
-                use PrimitiveKind::*;
-                match primitive {
-                    Float32 => write!(f, "f32")?,
-                    Float64 => write!(f, "f64")?,
-                    Int32 => write!(f, "i32")?,
-                    Int64 => write!(f, "i64")?,
-                }
-            }
-        }
-
-        Ok(())
-    }
-}
-
 fn resolve_type_unit(
     compiler: &Compiler,
     type_unit_id: usize,
     mut reqursion_guard: VecTop<'_, CompileMemberId>,
-) -> Result<ResolvedType, CompileError> {
+) -> Result<TypeDef, CompileError> {
     use std::ops::Deref;
     let type_units = compiler.named_types.read().unwrap();
 
@@ -372,12 +284,15 @@ fn resolve_type_unit(
         Index::Inside(_) => {
             panic!("TODO: Circular type error");
         }
-        Index::InsideFull(_) => {
+        Index::InsideFull(index) => {
             // This is a circular type, but fortunately
             // the circle is formed around a pointer
             // boundary, so it's fine.
             // We can't get a size though.
-            return Ok(ResolvedType::Circular { type_unit_id });
+            let size = reqursion_guard.full_slice().len();
+            return Ok(TypeDef::Circular {
+                n_steps_up: size - index,
+            });
         }
     }
 
@@ -396,7 +311,7 @@ fn resolve_type_unit(
             reqursion_guard.pop();
 
             if let Some(unique_id) = unique_type_id {
-                Ok(ResolvedType::UniqueType(
+                Ok(TypeDef::UniqueType(
                     unique_id,
                     Box::new(resolved),
                 ))
@@ -411,7 +326,7 @@ fn resolve_type_unit(
 pub fn resolve_type(
     compiler: &Compiler,
     resolving: &TypeExpression,
-) -> Result<ResolvedType, CompileError> {
+) -> Result<TypeDef, CompileError> {
     let namespaces = &compiler.namespaces;
     let mut reqursion_guard = Vec::new();
     resolve_type_req(
@@ -432,12 +347,12 @@ fn resolve_type_req(
     compiler: &Compiler,
     resolving: &TypeExpression,
     mut reqursion_guard: VecTop<'_, CompileMemberId>,
-) -> Result<ResolvedType, CompileError> {
+) -> Result<TypeDef, CompileError> {
     use TypeExpression::*;
     match resolving {
         Primitive {
             kind, ..
-        } => Ok(ResolvedType::Primitive(*kind)),
+        } => Ok(TypeDef::Primitive(*kind)),
         Pointer {
             mutable, nullable, pointing_to, ..
         } => {
@@ -447,7 +362,7 @@ fn resolve_type_req(
                 reqursion_guard.top(),
             )?;
 
-            Ok(ResolvedType::Pointer {
+            Ok(TypeDef::Pointer {
                 mutable: *mutable,
                 nullable: *nullable, 
                 pointing_to: Box::new(pointing_to)
@@ -498,7 +413,7 @@ fn resolve_type_req(
                 reqursion_guard.top(),
             )?;
 
-            Ok(ResolvedType::UniqueType(
+            Ok(TypeDef::UniqueType(
                 unique_id,
                 Box::new(internal)
             ))
@@ -515,7 +430,7 @@ fn resolve_type_req(
                 resolved_members.push((*name, member));
             }
 
-            Ok(ResolvedType::Collection(resolved_members))
+            Ok(TypeDef::Collection(resolved_members))
         }
         _ => unimplemented!(),
     }

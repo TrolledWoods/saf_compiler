@@ -1,9 +1,2 @@
-alias A = {
-	hello: *A,
-	b: *B,
-};
-
-alias B = {
-	A,
-	*B
-};
+alias A = *A;
+alias B = *B;
