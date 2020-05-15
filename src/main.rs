@@ -26,6 +26,7 @@ fn main() {
                     namespace_id,
                     name,
                     definition,
+                    is_unique,
                     ..
                 } => {
                     compile::add_named_type(
@@ -33,6 +34,7 @@ fn main() {
                         namespace_id,
                         name,
                         definition,
+                        is_unique,
                     ).unwrap();
                 }
             }

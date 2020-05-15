@@ -2,6 +2,7 @@ use std::sync::{ Mutex, RwLock, RwLockReadGuard };
 use std::sync::atomic::{ Ordering, AtomicUsize };
 use std::collections::HashMap;
 use std::mem::drop;
+use std::fmt;
 use crate::tiny_string::TinyString;
 use crate::vec_top::{ VecTop, Index };
 use crate::parser::{ SourcePos, Identifier };
@@ -94,7 +95,14 @@ pub fn compile_ready(
                     id,
                     VecTop::at_top(&mut vec),
                 ) {
-                    Ok(value) => Ok(value),
+                    Ok(value) => {
+                        debug!(
+                            "Resolved type unit {:?} to {}", 
+                            id,
+                            value,
+                        );
+                        Ok(value)
+                    }
                     Err(CompileError::NotDefined {
                         namespace_id,
                         name,
@@ -118,6 +126,7 @@ pub fn compile_ready(
                     }
                     Err(err) => Err(err),
                 }?;
+
             }
             Constant(id) => 
                 unimplemented!("TODO: Constants"),
@@ -164,11 +173,17 @@ pub fn add_named_type(
     namespace_id: usize,
     name: Identifier,
     definition: TypeExpression,
+    is_unique: bool,
 ) -> Result<usize, CompileError> {
     let mut named_types = compiler.named_types.write().unwrap();
     let named_type_id = named_types.len();
     named_types.push(TypeUnit {
         definition,
+        unique_type_id: if is_unique {
+            Some(compiler.add_unique_type())
+        } else {
+            None
+        },
         resolved: RwLock::new(None),
         resolved_deps: Mutex::new(Vec::new()),
     });
@@ -194,7 +209,13 @@ pub fn add_named_type(
         named_type_id,
         VecTop::at_top(&mut req_guard)
     ) {
-        Ok(value) => (),
+        Ok(value) => {
+            debug!(
+                "Resolved type unit {:?} to {:#?}", 
+                named_type_id,
+                value,
+            );
+        }
         Err(CompileError::NotDefined {
             namespace_id,
             name,
@@ -275,6 +296,67 @@ pub enum ResolvedType {
     Primitive(PrimitiveKind),
 }
 
+impl fmt::Display for ResolvedType {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        use ResolvedType::*;
+        match self {
+            Circular { type_unit_id } => write!(f, "@{}", type_unit_id)?,
+            Collection(members) => {
+                write!(f, "{} ", '{')?;
+                for (i, (name, member)) in members.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{}: {}", name, member)?;
+                }
+                write!(f, " {}", '}')?;
+            }
+            Pointer {
+                nullable,
+                mutable,
+                pointing_to,
+            } => { 
+                write!(f, "*")?;
+                if *nullable { write!(f, "null ")?; }
+                if *mutable  { write!(f, "mut ")?; }
+                write!(f, "{}", pointing_to)?;
+            }
+            VariableArray {
+                mutable,
+                content_type,
+            } => {
+                if *mutable {
+                    write!(f, "[?] ")?;
+                } else {
+                    write!(f, "[-] ")?;
+                }
+
+                write!(f, "{}", content_type)?;
+            }
+            FixedArray {
+                size,
+                content_type,
+            } => {
+                write!(f, "[{}] {}", size, content_type)?;
+            }
+            UniqueType(id, internal) => {
+                write!(f, "${} {}", id, internal)?;
+            }
+            Primitive(primitive) => {
+                use PrimitiveKind::*;
+                match primitive {
+                    Float32 => write!(f, "f32")?,
+                    Float64 => write!(f, "f64")?,
+                    Int32 => write!(f, "i32")?,
+                    Int64 => write!(f, "i64")?,
+                }
+            }
+        }
+
+        Ok(())
+    }
+}
+
 fn resolve_type_unit(
     compiler: &Compiler,
     type_unit_id: usize,
@@ -304,23 +386,23 @@ fn resolve_type_unit(
         CompileMemberId::NamedType(type_unit_id)
     );
 
-    // println!("{:?}", reqursion_guard);
-
+    let unique_type_id = type_units[type_unit_id].unique_type_id;
     match resolve_type_req(
         compiler,
         &type_units[type_unit_id].definition,
         reqursion_guard.temp_clone(),
     ) {
-        Ok(resolved_id) => {
-            debug!(
-                "Resolved type unit {:?} to {:#?}", 
-                type_unit_id,
-                resolved_id
-            );
-
+        Ok(resolved) => {
             reqursion_guard.pop();
 
-            Ok(resolved_id)
+            if let Some(unique_id) = unique_type_id {
+                Ok(ResolvedType::UniqueType(
+                    unique_id,
+                    Box::new(resolved),
+                ))
+            } else { 
+                Ok(resolved)
+            }
         }
         Err(err) => Err(err)
     }
@@ -439,6 +521,7 @@ pub enum CompileMemberId {
 
 struct TypeUnit {
     definition: TypeExpression,
+    unique_type_id: Option<usize>,
 
     /// An id to the resolved type.
     /// This is because resolved types are intended

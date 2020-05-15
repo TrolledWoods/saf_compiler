@@ -66,6 +66,7 @@ pub enum CompilationUnit {
         namespace_id: usize,
         name: Identifier,
         definition: TypeExpression,
+        is_unique: bool,
     },
 }
 
@@ -155,13 +156,7 @@ fn parse_type_def(
         ),
     )?;
 
-    let definition = if is_unique {
-        TypeExpression::UniqueType(
-            Box::new(parse_type(parser, namespace_id)?)
-        )
-    } else {
-        parse_type(parser, namespace_id)?
-    };
+    let definition = parse_type(parser, namespace_id)?;
 
     parse_kind(
         parser,
@@ -174,6 +169,7 @@ fn parse_type_def(
         namespace_id,
         name,
         definition,
+        is_unique,
     })
 }
 
