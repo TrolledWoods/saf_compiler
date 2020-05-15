@@ -2,8 +2,8 @@ use std::sync::{ Mutex, RwLock, RwLockReadGuard };
 use std::collections::HashMap;
 use std::mem::drop;
 use crate::tiny_string::TinyString;
-use crate::vec_top::VecTop;
-use crate::parser::Identifier;
+use crate::vec_top::{ VecTop, Index };
+use crate::parser::{ SourcePos, Identifier };
 use crate::parser::ast::{
     TypeExpression,
     PrimitiveKind,
@@ -73,7 +73,16 @@ pub fn compile_ready(
             // Cannot compile it anyway
             Poison => (),
             NamedType(id) => {
-                try_resolve_type_unit(compiler, id)?;
+                let mut vec = Vec::new();
+                let mut resolved_types = 
+                    compiler.resolved_types
+                    .write().unwrap();
+                resolve_type_unit(
+                    compiler, 
+                    &mut *resolved_types,
+                    id,
+                    VecTop::at_top(&mut vec),
+                    )?;
             }
             Constant(id) => 
                 unimplemented!("TODO: Constants"),
@@ -136,24 +145,19 @@ pub fn add_named_type(
         CompileMemberId::NamedType(named_type_id as usize),
     )?;
 
-    let named_types = compiler.named_types.read().unwrap();
-    match resolve_type(
+    // Try to resolve the type unit.
+    // If any of the dependencies are not defined,
+    // it will wait until(if) that dependency
+    // is defined.
+    let mut resolved_types = 
+        compiler.resolved_types.write().unwrap();
+    let mut req_guard = Vec::new();
+    resolve_type_unit(
         compiler,
-        &named_types[named_type_id].definition,
-    ) {
-        Ok(resolved_type_id) => {
-            let mut resolved = 
-                named_types[named_type_id]
-                .resolved.write().unwrap();
-            *resolved = Some(resolved_type_id);
-        }
-        Err(CompileError::DependencyNotReady(id)) => {
-            unimplemented!("TODO: add a 'on_done' thing");
-        }
-        Err(CompileError::Poison) => 
-            return Err(CompileError::Poison),
-        Err(err) => Err(err)?,
-    }
+        &mut *resolved_types,
+        named_type_id,
+        VecTop::at_top(&mut req_guard)
+        )?;
 
     Ok(named_type_id as usize)
 }
@@ -165,6 +169,17 @@ type CompileResult<T> = Result<T, CompileError>;
 pub enum CompileError {
     Poison,
     DependencyNotReady(Dependency),
+    NotDefined {
+        namespace_id: usize,
+        name: TinyString,
+        dependant_name: Identifier,
+    },
+    InvalidKind {
+        at: SourcePos, 
+        // TODO: Add where the invalid kind was
+        // defined as well.
+        expected_kind: String
+    },
     Namespace(NamespaceError),
 }
 
@@ -182,25 +197,25 @@ impl From<NamespaceError> for CompileError {
 /// in resolved types.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub enum ResolvedType {
-    Collection(Vec<(TinyString, usize)>),
+    Circular { 
+        type_unit_id: usize,
+    },
+    Collection(Vec<(TinyString, Box<ResolvedType>)>),
     /// Just a pointer to some other type
     Pointer {
         nullable: bool,
         mutable: bool,
-        pointing_to: usize,
+        pointing_to: Box<ResolvedType>,
     },
     VariableArray {
         mutable: bool,
-        content_type: usize,
+        content_type: Box<ResolvedType>,
     },
     FixedArray {
         size: usize,
-        content_type: usize,
+        content_type: Box<ResolvedType>,
     },
-    /// A wrapped type has the same representation
-    /// as the type it wraps, but isn't treated
-    /// as the same time.
-    WrappedType(usize),
+    UniqueType(usize, Box<ResolvedType>),
     Primitive(PrimitiveKind),
 }
 
@@ -215,54 +230,70 @@ pub fn add_dependency(
     }
 }
 
-/// Will try to resolve a type unit.
-/// If it's not possible for some reason,
-/// it will either add a dependency and try again
-/// once resolved, or if not recoverable, it will
-/// produce a CompileError.
-pub fn try_resolve_type_unit(
+fn resolve_type_unit(
     compiler: &Compiler,
+    resolved_types: &mut Vec<ResolvedType>,
     type_unit_id: usize,
-) -> Result<Option<usize>, CompileError> {
+    mut reqursion_guard: VecTop<'_, CompileMemberId>,
+) -> Result<ResolvedType, CompileError> {
+    use std::ops::Deref;
     let type_units = compiler.named_types.read().unwrap();
 
-    match resolve_type(
+    match reqursion_guard.index_of(
+        &CompileMemberId::NamedType(type_unit_id)
+    ) {
+        Index::NotInside => (),
+        Index::Inside(_) => {
+            panic!("TODO: Circular type error");
+        }
+        Index::InsideFull(_) => {
+            // This is a circular type, but fortunately
+            // the circle is formed around a pointer
+            // boundary, so it's fine.
+            // We can't get a size though.
+            return Ok(ResolvedType::Circular { type_unit_id });
+        }
+    }
+
+    let mut requresion_guard = reqursion_guard.top();
+    reqursion_guard.push(
+        CompileMemberId::NamedType(type_unit_id)
+    );
+
+    println!("{:?}", reqursion_guard);
+
+    match resolve_type_req(
         compiler,
+        resolved_types,
         &type_units[type_unit_id].definition,
+        reqursion_guard.temp_clone(),
     ) {
         Ok(resolved_id) => {
+            // TODO: After the tree has been built, then
+            // we can start converting the ResolvedType trees
+            // into indicees.
+            
             // This may seem like a logical datarace,
             // but it's fine, because even if it is a
             // "data race", we should be setting the
             // value to the same thing in both cases,
             // so it should be fine anyway.
-            let mut resolved = 
-                type_units[type_unit_id]
-                    .resolved
-                    .write()
-                    .unwrap();
-            *resolved = Some(resolved_id);
+            // let mut resolved = 
+            //     type_units[type_unit_id]
+            //         .resolved
+            //         .write()
+            //         .unwrap();
+            // *resolved = Some(resolved_id);
             
             debug!(
-                "Resolved type unit {:?} to {}", 
+                "Resolved type unit {:?} to {:?}", 
                 type_unit_id,
                 resolved_id
             );
 
-            Ok(Some(resolved_id))
-        }
-        Err(
-            CompileError::DependencyNotReady(
-                depending_on_id
-            )
-        ) => {
-            add_dependency(
-                compiler,
-                depending_on_id,
-                CompileMemberId::NamedType(type_unit_id),
-            );
+            reqursion_guard.pop();
 
-            Ok(None)
+            Ok(resolved_id)
         }
         Err(err) => Err(err)
     }
@@ -271,11 +302,20 @@ pub fn try_resolve_type_unit(
 pub fn resolve_type(
     compiler: &Compiler,
     resolving: &TypeExpression,
-) -> Result<usize, CompileError> {
-    let mut resolved_types = compiler.resolved_types.write().unwrap();
+) -> Result<ResolvedType, CompileError> {
+    let mut resolved_types = 
+        compiler
+        .resolved_types
+        .write()
+        .unwrap();
     let namespaces = &compiler.namespaces;
     let mut reqursion_guard = Vec::new();
-    resolve_type_req(&mut *resolved_types, namespaces, resolving, VecTop::at_top(&mut reqursion_guard))
+    resolve_type_req(
+        compiler, 
+        &mut *resolved_types, 
+        resolving, 
+        VecTop::at_top(&mut reqursion_guard)
+    )
 }
 
 /// ``reqursion_guard`` parameter:
@@ -286,43 +326,69 @@ pub fn resolve_type(
 /// infinite sizing loops, but should still not
 /// be recursed into.
 fn resolve_type_req(
+    compiler: &Compiler,
     resolved_types: &mut Vec<ResolvedType>,
-    namespaces: &Namespaces,
     resolving: &TypeExpression,
-    reqursion_guard: VecTop<'_, CompileMemberId>,
-) -> Result<usize, CompileError> {
+    mut reqursion_guard: VecTop<'_, CompileMemberId>,
+) -> Result<ResolvedType, CompileError> {
     use TypeExpression::*;
     match resolving {
         Primitive {
-            kind: PrimitiveKind::Float32, ..
-        } => Ok(FLOAT_32_ID),
-        Primitive {
-            kind: PrimitiveKind::Float64, ..
-        } => Ok(FLOAT_64_ID),
-        Primitive {
-            kind: PrimitiveKind::Int32, ..
-        } => Ok(INT_32_ID),
-        Primitive {
-            kind: PrimitiveKind::Int64, ..
-        } => Ok(INT_64_ID),
+            kind, ..
+        } => Ok(ResolvedType::Primitive(*kind)),
         Pointer {
             mutable, nullable, pointing_to, ..
         } => {
             let pointing_to = resolve_type_req(
+                compiler,
                 resolved_types,
-                namespaces,
                 pointing_to,
-                reqursion_guard,
+                reqursion_guard.top(),
             )?;
 
-            let resolved = ResolvedType::Pointer {
-                // rustc: please make this easier! :pray:
+            Ok(ResolvedType::Pointer {
                 mutable: *mutable,
                 nullable: *nullable, 
-                pointing_to
-            };
+                pointing_to: Box::new(pointing_to)
+            })
+        }
+        NamedType {
+            pos, 
+            namespace_id, 
+            name,
+        } => {
+            // Try to get the type
+            let other = compiler.namespaces
+                    .find_value(
+                *namespace_id, 
+                *name,
+            ).ok_or(CompileError::NotDefined {
+                namespace_id: *namespace_id,
+                name: *name,
+                dependant_name: Identifier {
+                    pos: pos.clone(),
+                    name: *name,
+                }
+            })?;
 
-            Ok(type_id(resolved_types, &resolved))
+            match other {
+                CompileMemberId::Poison =>
+                    return Err(CompileError::Poison),
+                CompileMemberId::NamedType(other_id) => {
+                    Ok(resolve_type_unit(
+                        compiler,
+                        resolved_types,
+                        other_id,
+                        reqursion_guard,
+                    )?)
+                }
+                _ => return Err(
+                    CompileError::InvalidKind {
+                        at: pos.clone(),
+                        expected_kind: format!("type"),
+                    }
+                )
+            }
         }
         _ => unimplemented!(),
     }

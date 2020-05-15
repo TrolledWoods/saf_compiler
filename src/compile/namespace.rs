@@ -76,6 +76,25 @@ impl Namespaces {
             .get(&name)
             .map(|member| member.data)
     }
+
+    pub fn find_or_depend_on_value(
+        &self,
+        namespace_id: usize,
+        name: TinyString,
+        dependant: CompileMemberId,
+    ) -> Option<CompileMemberId> {
+        match self.members
+                .read()
+                .unwrap()
+                .get(&name) {
+            Some(member) => return Some(member.data),
+            None => ()
+        }
+
+        println!("TODO: Insert dependency on {} to call {:?} when ready", name, dependant);
+
+        None
+    }
 }
 
 #[derive(Debug)]

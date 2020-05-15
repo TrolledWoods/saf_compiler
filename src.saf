@@ -1,11 +1,3 @@
-type Hello1 = f32;
-type Hello3 = f64;
-type Hello5 = i32;
-type Hello2 = *null i64;
-// type Hello2 = *Hello;
-
-
-
-// const pointer: *null f32 = to<f32> *   null;
-// * (mut)      -> * (mut) null
-// * mut (null) -> * (null)
+// We have to make them non-ordered!
+type What = *null What2;
+type What2 = What;
