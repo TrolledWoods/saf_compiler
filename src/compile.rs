@@ -1,4 +1,5 @@
 use std::sync::{ Mutex, RwLock, RwLockReadGuard };
+use std::sync::atomic::{ Ordering, AtomicUsize };
 use std::collections::HashMap;
 use std::mem::drop;
 use crate::tiny_string::TinyString;
@@ -33,6 +34,7 @@ macro_rules! debug {
 pub struct Compiler {
     named_types: RwLock<Vec<TypeUnit>>,
     resolved_types: RwLock<Vec<ResolvedType>>,
+    unique_type_ctr: AtomicUsize,
 
     ready_to_compile: Mutex<Vec<CompileMemberId>>,
     namespaces: Namespaces,
@@ -56,7 +58,14 @@ impl Compiler {
             resolved_types: RwLock::new(types),
             namespaces: Namespaces::new(),
             ready_to_compile: Mutex::new(Vec::new()),
+            unique_type_ctr: AtomicUsize::new(0),
         }
+    }
+
+    pub fn add_unique_type(
+        &self,
+    ) -> usize {
+        self.unique_type_ctr.fetch_add(1, Ordering::SeqCst)
     }
 
     fn add_ready_to_compile(
@@ -329,7 +338,7 @@ fn resolve_type_unit(
             // *resolved = Some(resolved_id);
             
             debug!(
-                "Resolved type unit {:?} to {:?}", 
+                "Resolved type unit {:?} to {:#?}", 
                 type_unit_id,
                 resolved_id
             );
@@ -432,6 +441,20 @@ fn resolve_type_req(
                     }
                 )
             }
+        }
+        UniqueType(internal) => {
+            let unique_id = compiler.add_unique_type();
+            let internal = resolve_type_req(
+                compiler,
+                resolved_types,
+                internal,
+                reqursion_guard.top(),
+            )?;
+
+            Ok(ResolvedType::UniqueType(
+                unique_id,
+                Box::new(internal)
+            ))
         }
         _ => unimplemented!(),
     }

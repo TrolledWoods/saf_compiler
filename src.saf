@@ -1,5 +1,3 @@
-type MoreWhat = What;
-
-// We have to make them non-ordered!
-type What = *null What2;
-type What2 = What;
+alias MoreHello = *mut *mut EvenMoreOtherType;
+type MoreHello2 = *mut MoreHello;
+type EvenMoreOtherType = *mut MoreHello2;

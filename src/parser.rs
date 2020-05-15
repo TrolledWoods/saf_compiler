@@ -89,7 +89,8 @@ pub fn parse_file(
     while let Some(token) = parser.lexer.peek_token(0)? {
         use TokenKind::*;
         match token.kind {
-            Keyword(KeywordKind::TypeDef) => add_comp_unit(parse_type_def(&mut parser, namespace_id)?),
+            Keyword(KeywordKind::TypeDef) |
+            Keyword(KeywordKind::Alias) => add_comp_unit(parse_type_def(&mut parser, namespace_id)?),
             _ => return Err(ParseError::InvalidToken {
                 pos: token.pos(parser.file()),
                 kind: token.kind,
@@ -116,15 +117,26 @@ fn parse_type_def(
     parser: &mut Parser<'_>,
     namespace_id: usize,
 ) -> Result<CompilationUnit, ParseError> {
-    let pos = parse_kind(
-        parser,
-        KeywordKind::TypeDef,
-        |_| unreachable!(
-            "Nothing should be calling the \
-            parse_type_def function without making sure \
-            that the keyword ``type`` exists there first"
-        ),
-    )?;
+    let token = parser.expect_eat_token()?;
+    let (is_unique, pos) = match token {
+        Token {
+            kind: TokenKind::Keyword(KeywordKind::TypeDef),
+            ..
+        } => {
+            (true, token.pos(parser.file()))
+        }
+        Token {
+            kind: TokenKind::Keyword(KeywordKind::Alias),
+            ..
+        } => {
+            (false, token.pos(parser.file()))
+        }
+        _ => return Err(ParseError::InvalidToken {
+            pos: token.pos(parser.file()),
+            kind: token.kind,
+            message: format!("Wanted 'type' or 'alias'"),
+        })
+    };
 
     let name = parse_identifier(
         parser,
@@ -143,7 +155,13 @@ fn parse_type_def(
         ),
     )?;
 
-    let definition = parse_type(parser, namespace_id)?;
+    let definition = if is_unique {
+        TypeExpression::UniqueType(
+            Box::new(parse_type(parser, namespace_id)?)
+        )
+    } else {
+        parse_type(parser, namespace_id)?
+    };
 
     parse_kind(
         parser,
