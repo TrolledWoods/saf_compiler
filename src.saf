@@ -1,3 +1,5 @@
+type MoreWhat = What;
+
 // We have to make them non-ordered!
 type What = *null What2;
 type What2 = What;

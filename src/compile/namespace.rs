@@ -3,10 +3,16 @@ use crate::parser::{ SourcePos, Identifier };
 use crate::compile::CompileMemberId;
 use std::collections::HashMap;
 use std::sync::RwLock;
+use std::mem::drop;
 
-struct NamespaceMember {
-    pos: SourcePos,
-    data: CompileMemberId,
+enum NamespaceMember {
+    Defined {
+        pos: SourcePos,
+        data: CompileMemberId,
+    },
+    NotDefined {
+        dependants: Vec<(SourcePos, CompileMemberId)>,
+    },
 }
 
 pub struct Namespaces {
@@ -25,43 +31,110 @@ impl Namespaces {
         namespace_id: usize,
         name: Identifier,
         member_id: CompileMemberId,
-    ) -> Result<(), NamespaceError> {
+    ) -> Result<
+        Vec<(SourcePos, CompileMemberId)>, 
+        NamespaceError
+    > {
         let mut members = self.members.write().unwrap();
         let old_member = members.insert(
             name.name, 
-            NamespaceMember {
+            NamespaceMember::Defined {
                 pos: name.pos.clone(),
                 data: member_id,
             }
         );
 
         // Is it ambiguous?
-        if let Some(
-            NamespaceMember { pos: old_pos, data: old_id, .. }
-        ) = old_member {
-            members.insert(
-                name.name, 
-                NamespaceMember {
-                    pos: name.pos.clone(),
-                    data: CompileMemberId::Poison,
-                }
-            );
+        match old_member {
+            Some(NamespaceMember::Defined { 
+                pos: old_pos, 
+                data: old_id, 
+            }) => {
+                members.insert(
+                    name.name, 
+                    NamespaceMember::Defined {
+                        pos: name.pos.clone(),
+                        data: CompileMemberId::Poison,
+                    }
+                );
 
-            if let CompileMemberId::Poison = old_id {
-                Err(NamespaceError::Poison)
-            }else {
-                Err(NamespaceError::NameClash {
-                    namespace_id,
-                    old: Identifier {
-                        pos: old_pos,
-                        name: name.name,
-                    },
-                    newly_added: name,
-                })
+                if let CompileMemberId::Poison = old_id {
+                    Err(NamespaceError::Poison)
+                }else {
+                    Err(NamespaceError::NameClash {
+                        namespace_id,
+                        old: Identifier {
+                            pos: old_pos,
+                            name: name.name,
+                        },
+                        newly_added: name,
+                    })
+                }
             }
-        }else {
-            println!("Namespace; '{}': {:?}", name.name, member_id);
-            Ok(())
+            Some(NamespaceMember::NotDefined {
+                dependants,
+            }) => {
+                println!(
+                    "Namespace with deps: '{}': {:?}", 
+                    name.name,
+                    member_id
+                );
+                Ok(dependants)
+            }
+            None => {
+                println!(
+                    "Namespace: '{}': {:?}", 
+                    name.name,
+                    member_id
+                );
+                Ok(vec![])
+            }
+        }
+    }
+
+    /// Adds a dependency. This will make that dependant
+    /// be returned to the caller of the ``insert_member``
+    /// if that caller defined the thing you're depending on,
+    /// or it will produce a compilation error if nobody
+    /// ever set the value. That's why you have to pass
+    /// a ``SourcePos``, because otherwise we have no way
+    /// of getting a good error message.
+    ///
+    /// It may return a Some() if the value you're depending
+    /// on is already defined.
+    ///
+    /// It takes a write lock to the members of the namespace,
+    /// so make sure there is no read lock to them when
+    /// calling this function.
+    pub fn add_dependency(
+        &self,
+        namespace_id: usize,
+        name: TinyString,
+        dependant_pos: SourcePos,
+        dependant: CompileMemberId,
+    ) -> Option<CompileMemberId> {
+        let mut members = self.members.write().unwrap();
+        let member = members.get_mut(&name);
+        match member {
+            Some(NamespaceMember::Defined {
+                data, ..
+            }) => Some(*data),
+            Some(NamespaceMember::NotDefined {
+                dependants,
+            }) => {
+                dependants.push((dependant_pos, dependant));
+                None
+            }
+            None => {
+                members.insert(
+                    name,
+                    NamespaceMember::NotDefined {
+                        dependants: 
+                            vec![(dependant_pos, dependant)]
+                    }
+                );
+                None
+            }
         }
     }
 
@@ -70,30 +143,15 @@ impl Namespaces {
         namespace_id: usize, 
         name: TinyString,
     ) -> Option<CompileMemberId> {
-        self.members
-            .read()
-            .unwrap()
-            .get(&name)
-            .map(|member| member.data)
-    }
-
-    pub fn find_or_depend_on_value(
-        &self,
-        namespace_id: usize,
-        name: TinyString,
-        dependant: CompileMemberId,
-    ) -> Option<CompileMemberId> {
         match self.members
                 .read()
                 .unwrap()
                 .get(&name) {
-            Some(member) => return Some(member.data),
-            None => ()
+            Some(NamespaceMember::Defined {
+                data, ..
+            }) => Some(*data),
+            _ => None
         }
-
-        println!("TODO: Insert dependency on {} to call {:?} when ready", name, dependant);
-
-        None
     }
 }
 

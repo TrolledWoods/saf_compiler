@@ -58,6 +58,12 @@ impl Compiler {
             ready_to_compile: Mutex::new(Vec::new()),
         }
     }
+
+    fn add_ready_to_compile(
+        &self, ready: CompileMemberId,
+    ) {
+        self.ready_to_compile.lock().unwrap().push(ready);
+    }
 }
 
 /// Compiles things that are "ready for compilation"
@@ -77,12 +83,36 @@ pub fn compile_ready(
                 let mut resolved_types = 
                     compiler.resolved_types
                     .write().unwrap();
-                resolve_type_unit(
+                match resolve_type_unit(
                     compiler, 
                     &mut *resolved_types,
                     id,
                     VecTop::at_top(&mut vec),
-                    )?;
+                ) {
+                    Ok(value) => Ok(value),
+                    Err(CompileError::NotDefined {
+                        namespace_id,
+                        name,
+                        dependant_name,
+                    }) => {
+                        let deps 
+                        = compiler.namespaces.add_dependency(
+                            namespace_id,
+                            name,
+                            dependant_name.pos.clone(),
+                            CompileMemberId::NamedType(id),
+                        );
+                        if let Some(value) = deps {
+                            compiler.add_ready_to_compile(
+                                value
+                            );
+                        }
+
+                        // Just skip this one for now
+                        continue;
+                    }
+                    Err(err) => Err(err),
+                }?;
             }
             Constant(id) => 
                 unimplemented!("TODO: Constants"),
@@ -139,11 +169,15 @@ pub fn add_named_type(
     });
     drop(named_types);
 
-    compiler.namespaces.insert_member(
+    let dependants = compiler.namespaces.insert_member(
         namespace_id,
         name,
         CompileMemberId::NamedType(named_type_id as usize),
     )?;
+
+    for (_pos, dependant) in dependants {
+        compiler.add_ready_to_compile(dependant);
+    }
 
     // Try to resolve the type unit.
     // If any of the dependencies are not defined,
@@ -152,12 +186,32 @@ pub fn add_named_type(
     let mut resolved_types = 
         compiler.resolved_types.write().unwrap();
     let mut req_guard = Vec::new();
-    resolve_type_unit(
+    match resolve_type_unit(
         compiler,
         &mut *resolved_types,
         named_type_id,
         VecTop::at_top(&mut req_guard)
-        )?;
+    ) {
+        Ok(value) => (),
+        Err(CompileError::NotDefined {
+            namespace_id,
+            name,
+            dependant_name,
+        }) => {
+            let deps = compiler.namespaces.add_dependency(
+                namespace_id,
+                name,
+                dependant_name.pos.clone(),
+                CompileMemberId::NamedType(named_type_id),
+            );
+            if let Some(value) = deps {
+                compiler.add_ready_to_compile(
+                    value
+                );
+            }
+        }
+        Err(err) => return Err(err),
+    }
 
     Ok(named_type_id as usize)
 }
@@ -219,17 +273,6 @@ pub enum ResolvedType {
     Primitive(PrimitiveKind),
 }
 
-pub fn add_dependency(
-    compiler: &Compiler,
-    to: Dependency,
-    dependant: CompileMemberId,
-) {
-    use Dependency::*;
-    match to {
-        _ => unimplemented!()
-    }
-}
-
 fn resolve_type_unit(
     compiler: &Compiler,
     resolved_types: &mut Vec<ResolvedType>,
@@ -260,7 +303,7 @@ fn resolve_type_unit(
         CompileMemberId::NamedType(type_unit_id)
     );
 
-    println!("{:?}", reqursion_guard);
+    // println!("{:?}", reqursion_guard);
 
     match resolve_type_req(
         compiler,
