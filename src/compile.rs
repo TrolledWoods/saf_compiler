@@ -17,6 +17,8 @@ use namespace::{ Namespaces, NamespaceError };
 pub mod type_def;
 use type_def::{ TypeDef };
 
+pub mod interp;
+
 // We want to know the type id of primitives.
 const FLOAT_32_ID: usize = 0;
 const FLOAT_64_ID: usize = 1;
@@ -272,6 +274,14 @@ pub enum CompileError {
         // defined as well.
         expected_kind: String
     },
+    InvalidValueType {
+        at: SourcePos,
+        expected_type: usize,
+        got_type: usize,
+    },
+    ExpectedType {
+        at: SourcePos,
+    },
     Namespace(NamespaceError),
 }
 
@@ -480,6 +490,43 @@ fn calc_type_def_req(
 
             TypeDef::VariableArray {
                 mutable: *mutable,
+                content_type: Box::new(member),
+            }
+        }
+        FixedArray {
+            members, size, ..
+        } => {
+            let member = calc_type_def_req(
+                compiler,
+                type_defs,
+                members,
+                reqursion_guard,
+                req_counter + 1,
+                identify_sub_definitions,
+            )?;
+
+            let size = match interp::interpret(
+                compiler,
+                size,
+            )? {
+                Some(interp::InterpreterValue {
+                    type_id: INT_64_ID,
+                    definition,
+                }) => {
+                    match definition[0] {
+                        interp::PrimitiveValue::Int64(val) => {
+                            val as usize
+                        },
+                        _ => unreachable!("type_id is INT_64_ID but the definition is not"),
+                    }
+                },
+                _ => {
+                    panic!("TODO: Invalid fixed array size type, expected i64");
+                }
+            };
+
+            TypeDef::FixedArray {
+                size,
                 content_type: Box::new(member),
             }
         }

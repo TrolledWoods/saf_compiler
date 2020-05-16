@@ -3,6 +3,7 @@ mod keyword;
 pub mod ast;
 
 pub use lexer::SourcePos;
+pub use lexer::Literal;
 use lexer::{ 
     TokenKind, 
     Token, 

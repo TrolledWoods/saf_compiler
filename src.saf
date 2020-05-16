@@ -1,1 +1,1 @@
-alias Test = [3 * 5 + 5 * 2] i32;
+alias Test = [6] i32;
