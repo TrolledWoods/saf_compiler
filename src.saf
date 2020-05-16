@@ -1,8 +1,1 @@
-type LinkedList = {
-	data: *null mut Node,
-};
-
-alias Node = {
-	next: *null mut Node,
-	data: f64,
-};
+alias Test = [3 * 5 + 5 * 2] i32;

@@ -39,7 +39,6 @@ pub enum PrimitiveKind {
 #[derive(Debug)]
 pub enum TypeExpression {
     NamedCollection(Vec<(TinyString, TypeExpression, Option<Expression>)>),
-    UnnamedCollection(Vec<(TypeExpression, Option<Expression>)>),
     Pointer {
         pos: SourcePos,
         mutable: bool,
@@ -47,12 +46,15 @@ pub enum TypeExpression {
         pointing_to: Box<TypeExpression>,
     },
     FixedArray {
+        pos: SourcePos,
         size: Box<Expression>,
+        // TODO: Rename to internal
         members: Box<TypeExpression>,
     },
     VariableArray {
         pos: SourcePos,
         mutable: bool,
+        // TODO: Rename to internal
         members: Box<TypeExpression>,
     },
     NamedType {

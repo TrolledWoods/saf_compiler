@@ -439,7 +439,7 @@ fn calc_type_def_req(
                 compiler,
                 type_defs,
                 internal,
-                reqursion_guard.top(),
+                reqursion_guard,
                 req_counter + 1,
                 identify_sub_definitions,
             )?;
@@ -465,6 +465,23 @@ fn calc_type_def_req(
             }
 
             TypeDef::Collection(resolved_members)
+        }
+        VariableArray {
+            members, mutable, ..
+        } => {
+            let member = calc_type_def_req(
+                compiler,
+                type_defs,
+                members,
+                reqursion_guard.top(),
+                req_counter + 1,
+                identify_sub_definitions,
+            )?;
+
+            TypeDef::VariableArray {
+                mutable: *mutable,
+                content_type: Box::new(member),
+            }
         }
         _ => unimplemented!(),
     };

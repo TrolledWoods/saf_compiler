@@ -317,6 +317,10 @@ fn parse_type(
         }
         Operator("*") => 
             parse_pointer(parser, namespace_id),
+        Bracket('[') | ArrayWindow | DynamicArray => {
+            // This is an array of some kind.
+            Ok(parse_array(parser, namespace_id)?)
+        }
         Bracket('{') => {
             Ok(TypeExpression::NamedCollection(
                 parse_collection(parser, namespace_id)?
@@ -328,6 +332,168 @@ fn parse_type(
             message: format!("Expected a type"),
         }),
     } 
+}
+
+fn parse_array(
+    parser: &mut Parser<'_>,
+    namespace_id: usize,
+) -> ParseResult<TypeExpression> {
+    let pos = parser.expect_peek_token(0)?.pos(parser.file());
+
+    // A window or mutable array
+    if try_parse_kind(parser, TokenKind::ArrayWindow)? {
+        let internal = parse_type(parser, namespace_id)?;
+        Ok(TypeExpression::VariableArray {
+            pos,
+            mutable: false,
+            members: Box::new(internal),
+        })
+    } else if try_parse_kind(parser, TokenKind::DynamicArray)? {
+        let internal = parse_type(parser, namespace_id)?;
+        Ok(TypeExpression::VariableArray {
+            pos,
+            mutable: true,
+            members: Box::new(internal),
+        })
+    } else {
+        let start = parse_kind(
+            parser,
+            TokenKind::Bracket('['),
+            |_| unreachable!("Shouldn't call parse_array when not sure that there isn't a '[', '[-]' or [?] bracket"),
+        )?.start;
+
+        let size = parse_expression(parser, namespace_id)?;
+        
+        let end = parse_kind(
+            parser,
+            TokenKind::Bracket(']'),
+            |_| format!("Expected closing ']'"),
+        )?.end;
+
+        let internal = parse_type(parser, namespace_id)?;
+
+        Ok(TypeExpression::FixedArray {
+            pos: SourcePos {
+                start, end, file: parser.file(),
+            },
+            size: Box::new(size),
+            members: Box::new(internal),
+        })
+    }
+}
+
+fn parse_expression(
+    parser: &mut Parser<'_>,
+    namespace_id: usize,
+) -> ParseResult<Expression> {
+    let e = parse_expression_req(parser, namespace_id, 0)?;
+    Ok(e)
+}
+
+/// Returns the operator precendence of the given operator.
+/// Higher means higher priority, i.e. that operator
+/// gets done first.
+///
+/// ``0`` is a reserved priority, so this function should
+/// never return 0.
+///
+/// # Panics
+/// Panics if the given string is not an operator.
+fn operator_precedence(op: &str) -> u8 {
+    match op {
+        "==" => 1,
+        "+" | "-" => 2,
+        "*" | "/" => 3,
+        _ => panic!("Invalid operator {}", op),
+    }
+}
+
+fn parse_expression_req(
+    parser: &mut Parser<'_>,
+    namespace_id: usize,
+    priority: u8,
+) -> ParseResult<Expression> {
+    let mut expression = parse_expression_value(
+        parser,
+        namespace_id,
+    )?;
+
+    loop {
+        match parser.peek_token(0)? {
+            Some(Token {
+                kind: TokenKind::Operator(op),
+                ..
+            }) => {
+                let new_priority = operator_precedence(op);
+                if new_priority > priority {
+                    let token = parser.expect_eat_token().unwrap();
+
+                    let new = parse_expression_req(
+                        parser,
+                        namespace_id,
+                        new_priority,
+                    )?;
+
+                    expression = Expression::Operation {
+                        pos: token.pos(parser.file()),
+                        operator: op,
+                        arguments: vec![
+                            expression,
+                            new,
+                        ],
+                    };
+                } else {
+                    break;
+                }
+            },
+            _ => break,
+        }
+    }
+
+    Ok(expression)
+}
+
+fn parse_expression_value(
+    parser: &mut Parser,
+    namespace_id: usize,
+) -> ParseResult<Expression> {
+    use Expression::*;
+    let token = parser.expect_peek_token(0)?;
+    let expression = match &token.kind {
+        TokenKind::Identifier(name) => {
+            parser.expect_eat_token().unwrap();
+            NamedValue {
+                pos: token.pos(parser.file()),
+                namespace_id,
+                name: *name,
+            }
+        }
+        TokenKind::Bracket('(') => {
+            unimplemented!("TODO: Expression blocks");
+        }
+        TokenKind::Literal(value) => {
+            parser.expect_eat_token().unwrap();
+            Literal {
+                pos: token.pos(parser.file()),
+                data: value.clone(),
+            }
+        }
+        kind => return Err(ParseError::InvalidToken {
+            pos: token.pos(parser.file()),
+            kind: kind.clone(),
+            message: format!("Expected expression value"),
+        }),
+    };
+
+    while try_parse_kind(
+        parser,
+        TokenKind::Bracket('('),
+    )? {
+        // Parse an argument list
+        unimplemented!("Function argument list");
+    }
+
+    Ok(expression)
 }
 
 fn parse_pointer(
