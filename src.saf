@@ -1,2 +1,8 @@
-alias Blah = Other;
-alias Other = *Blah;
+type LinkedList = {
+	data: *null mut Node,
+};
+
+alias Node = {
+	next: *null mut Node,
+	data: f64,
+};

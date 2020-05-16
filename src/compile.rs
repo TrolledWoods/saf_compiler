@@ -171,6 +171,9 @@ pub fn calc_type_id(
 
     let id = type_definitions.len() as usize;
     debug!("Added type id {}: {}", id, index_of);
+    let mut repr = Vec::new();
+    index_of.calc_repr(&mut repr);
+    debug!("representation: {:?}", repr);
     type_definitions.push(index_of.clone());
 
     id
