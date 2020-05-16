@@ -93,10 +93,15 @@ pub fn compile_ready(
             Poison => (),
             NamedType(id) => {
                 let mut vec = Vec::new();
-                match calc_type_def(
+                let mut type_defs = 
+                    compiler.type_definitions.write().unwrap();
+                match calc_type_units_type_def(
                     compiler, 
+                    &mut *type_defs,
                     id,
                     VecTop::at_top(&mut vec),
+                    0,
+                    true,
                 ) {
                     Ok(value) => {
                         debug!(
@@ -165,7 +170,7 @@ pub fn calc_type_id(
     }
 
     let id = type_definitions.len() as usize;
-    println!("Added type id {}: {:#?}", id, index_of);
+    debug!("Added type id {}: {}", id, index_of);
     type_definitions.push(index_of.clone());
 
     id
@@ -207,10 +212,14 @@ pub fn add_named_type(
     // it will wait until(if) that dependency
     // is defined.
     let mut req_guard = Vec::new();
-    match calc_type_def(
+    let mut type_defs = compiler.type_definitions.write().unwrap();
+    match calc_type_units_type_def(
         compiler,
+        &mut *type_defs,
         named_type_id,
-        VecTop::at_top(&mut req_guard)
+        VecTop::at_top(&mut req_guard),
+        0,
+        true,
     ) {
         Ok(value) => {
             debug!(
@@ -269,52 +278,67 @@ impl From<NamespaceError> for CompileError {
     }
 }
 
-fn calc_type_def(
+fn calc_type_units_type_def(
     compiler: &Compiler,
+    type_defs: &mut Vec<TypeDef>,
     type_unit_id: usize,
-    mut reqursion_guard: VecTop<'_, CompileMemberId>,
+    mut reqursion_guard: VecTop<'_, (CompileMemberId, usize)>,
+    reqursion_ctr: usize,
+    identify_sub_definitions: bool,
 ) -> Result<TypeDef, CompileError> {
     use std::ops::Deref;
     let type_units = compiler.named_types.read().unwrap();
 
-    match reqursion_guard.index_of(
-        &CompileMemberId::NamedType(type_unit_id)
+    match reqursion_guard.index_of_by(
+        |(member, _)| {
+            member == &CompileMemberId::NamedType(type_unit_id)
+        }
     ) {
         Index::NotInside => (),
-        Index::Inside(_) => {
+        Index::Inside(_, _) => {
             panic!("TODO: Circular type error");
         }
-        Index::InsideFull(index) => {
+        Index::InsideFull(_, (_, ctr)) => {
             // This is a circular type, but fortunately
             // the circle is formed around a pointer
             // boundary, so it's fine.
             // We can't get a size though.
-            let size = reqursion_guard.full_slice().len();
             return Ok(TypeDef::Circular {
-                n_steps_up: size - index,
+                n_steps_up: reqursion_ctr - *ctr,
             });
         }
     }
 
     let mut requresion_guard = reqursion_guard.top();
     reqursion_guard.push(
-        CompileMemberId::NamedType(type_unit_id)
+        (CompileMemberId::NamedType(type_unit_id), reqursion_ctr)
     );
 
     let unique_type_id = type_units[type_unit_id].unique_type_id;
     match calc_type_def_req(
         compiler,
+        type_defs,
         &type_units[type_unit_id].definition,
         reqursion_guard.temp_clone(),
+        if unique_type_id.is_some() {
+            reqursion_ctr + 1
+        } else {
+            reqursion_ctr
+        },
+        identify_sub_definitions,
     ) {
         Ok(resolved) => {
             reqursion_guard.pop();
 
             if let Some(unique_id) = unique_type_id {
-                Ok(TypeDef::UniqueType(
+                let def = TypeDef::UniqueType(
                     unique_id,
                     Box::new(resolved),
-                ))
+                );
+                if identify_sub_definitions {
+                    calc_type_id(type_defs, &def);
+                }
+                Ok(def)
             } else { 
                 Ok(resolved)
             }
@@ -332,28 +356,34 @@ fn calc_type_def(
 /// be recursed into.
 fn calc_type_def_req(
     compiler: &Compiler,
+    type_defs: &mut Vec<TypeDef>,
     resolving: &TypeExpression,
-    mut reqursion_guard: VecTop<'_, CompileMemberId>,
+    mut reqursion_guard: VecTop<'_, (CompileMemberId, usize)>,
+    req_counter: usize,
+    identify_sub_definitions: bool,
 ) -> Result<TypeDef, CompileError> {
     use TypeExpression::*;
-    match resolving {
+    let type_def = match resolving {
         Primitive {
             kind, ..
-        } => Ok(TypeDef::Primitive(*kind)),
+        } => TypeDef::Primitive(*kind),
         Pointer {
             mutable, nullable, pointing_to, ..
         } => {
             let pointing_to = calc_type_def_req(
                 compiler,
+                type_defs,
                 pointing_to,
                 reqursion_guard.top(),
+                req_counter + 1,
+                identify_sub_definitions,
             )?;
 
-            Ok(TypeDef::Pointer {
+            TypeDef::Pointer {
                 mutable: *mutable,
                 nullable: *nullable, 
                 pointing_to: Box::new(pointing_to)
-            })
+            }
         }
         NamedType {
             pos, 
@@ -378,11 +408,19 @@ fn calc_type_def_req(
                 CompileMemberId::Poison =>
                     return Err(CompileError::Poison),
                 CompileMemberId::NamedType(other_id) => {
-                    Ok(calc_type_def(
+                    calc_type_units_type_def(
                         compiler,
+                        type_defs,
                         other_id,
                         reqursion_guard,
-                    )?)
+                        // We do not add to the req counter,
+                        // because we don't care about names.
+                        // All they do is defer the types,
+                        // so we shouldn't actually count them
+                        // as a part of the type
+                        req_counter,
+                        identify_sub_definitions,
+                    )?
                 }
                 _ => return Err(
                     CompileError::InvalidKind {
@@ -396,14 +434,17 @@ fn calc_type_def_req(
             let unique_id = compiler.add_unique_type();
             let internal = calc_type_def_req(
                 compiler,
+                type_defs,
                 internal,
                 reqursion_guard.top(),
+                req_counter + 1,
+                identify_sub_definitions,
             )?;
 
-            Ok(TypeDef::UniqueType(
+            TypeDef::UniqueType(
                 unique_id,
                 Box::new(internal)
-            ))
+            )
         }
         NamedCollection(members) => {
             let mut resolved_members = 
@@ -411,16 +452,46 @@ fn calc_type_def_req(
             for (name, type_, _default) in members {
                 let member = calc_type_def_req(
                     compiler,
+                    type_defs,
                     type_,
                     reqursion_guard.temp_clone(),
+                    req_counter + 1,
+                    identify_sub_definitions,
                 )?;
                 resolved_members.push((*name, member));
             }
 
-            Ok(TypeDef::Collection(resolved_members))
+            TypeDef::Collection(resolved_members)
         }
         _ => unimplemented!(),
+    };
+
+    if identify_sub_definitions {
+        // Skip finding the definition of circular guards,
+        // because they are just the type they circle into.
+        match &type_def {
+            TypeDef::Circular { .. } => (),
+            _ => {
+                // Find the 'actual' definition of this type
+                // Because of the boolean value, this shouldn't
+                // cause infinite recursion
+                let mut local_reqursion_guard
+                    = Vec::new();
+                let actual_def = calc_type_def_req(
+                    compiler,
+                    type_defs,
+                    resolving,
+                    VecTop::at_top(&mut local_reqursion_guard),
+                    0,
+                    false,
+                )?;
+
+                calc_type_id(type_defs, &actual_def);
+            }
+        }
     }
+
+    Ok(type_def)
 }
 
 #[derive(Debug)]

@@ -1,2 +1,2 @@
-alias A = *A;
-alias B = *B;
+alias Blah = Other;
+alias Other = *Blah;

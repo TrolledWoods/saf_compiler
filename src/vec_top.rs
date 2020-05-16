@@ -28,8 +28,10 @@ impl<'a, T> VecTop<'a, T> {
         }
     }
 
-    pub fn index_of<Q: PartialEq<T>>(&self, wanted: &Q)
-            -> Index {
+    pub fn index_of_by(
+        &self, 
+        mut comparison: impl FnMut(&T) -> bool,
+    ) -> Index<T> {
         let mut index = None;
 
         for (i, member) in 
@@ -37,20 +39,27 @@ impl<'a, T> VecTop<'a, T> {
                 .iter()
                 .enumerate()
                 .rev() {
-            if wanted == member {
-                index = Some(i);
+            if comparison(member) {
+                index = Some((member, i));
                 break;
             }
         }
 
         match index {
-            Some(index) => if index >= self.stack_begin {
-                Index::Inside(index - self.stack_begin)
+            Some((member, index)) => if index >= self.stack_begin {
+                Index::Inside(index - self.stack_begin, member)
             } else {
-                Index::InsideFull(index)
+                Index::InsideFull(index, member)
             },
             None => Index::NotInside,
         }
+    }
+
+    pub fn index_of<Q: PartialEq<T>>(
+        &self, 
+        wanted: &Q
+    ) -> Index<T> {
+        self.index_of_by(|member| wanted == member)
     }
 
     pub fn push(&mut self, item: T) {
@@ -77,14 +86,14 @@ impl<'a, T> VecTop<'a, T> {
 }
 
 #[derive(Debug, Clone, Copy)]
-pub enum Index {
+pub enum Index<'a, T> {
     /// Not inside the vector
     NotInside,
     /// Inside the VecTop
-    Inside(usize),
+    Inside(usize, &'a T),
     /// Not inside the VecTop,
     /// but inside the underlying vector
-    InsideFull(usize),
+    InsideFull(usize, &'a T),
 }
 
 impl<T> Deref for VecTop<'_, T> {
