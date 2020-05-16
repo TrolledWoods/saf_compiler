@@ -1,4 +1,3 @@
-const TEST = 50 + 20;
-alias Test5 = [25 - 23] Test;
-alias Test = [5] i32;
-alias Test2 = [5 - 2] *Test2;
+const TEST2 = TEST3 + 5 - 2 + 5;
+const TEST = 5;
+const TEST3 = TEST + 5 - 2 + 5;

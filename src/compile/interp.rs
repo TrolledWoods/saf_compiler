@@ -3,6 +3,8 @@ use std::convert::TryInto;
 use super::{ 
     Compiler, 
     CompileError,
+    CompileMemberId,
+    resolve_constant_unit,
     FLOAT_32_ID,
     FLOAT_64_ID,
     INT_32_ID,
@@ -10,7 +12,7 @@ use super::{
 };
 use crate::parser::ast::{ Expression, PrimitiveKind };
 use crate::parser::Literal as LiteralValue;
-use crate::parser::SourcePos;
+use crate::parser::{ Identifier, SourcePos };
 use super::type_def::TypeDef;
 
 #[derive(Clone, Debug, PartialEq)]
@@ -139,6 +141,7 @@ fn try_operation(
 pub fn interpret(
     compiler: &Compiler,
     expression: &Expression,
+    reqursion_guard: &mut Vec<usize>,
 ) -> Result<Option<Value>, CompileError> {
     use Expression::*;
     match expression {
@@ -150,12 +153,17 @@ pub fn interpret(
             if arguments.len() == 1 {
                 unimplemented!("TODO: Unary operators");
             } else if arguments.len() == 2 {
-                let a = interpret(compiler, &arguments[0])?
-                    .ok_or_else(|| CompileError::ExpectedValue {
+                let a = interpret(compiler, 
+                    &arguments[0], 
+                    reqursion_guard,
+                )?.ok_or_else(|| CompileError::ExpectedValue {
                             at: arguments[0].pos() 
                     })?;
-                let b = interpret(compiler, &arguments[1])?
-                    .ok_or_else(|| CompileError::ExpectedValue {
+                let b = interpret(
+                    compiler, 
+                    &arguments[1],
+                    reqursion_guard,
+                )?.ok_or_else(|| CompileError::ExpectedValue {
                             at: arguments[1].pos()
                     })?;
 
@@ -168,6 +176,39 @@ pub fn interpret(
                 )?))
             } else {
                 unreachable!("Operators don't have 3 arguments, do they?")
+            }
+        }
+        Expression::NamedValue {
+            pos,
+            namespace_id,
+            name,
+        } => {
+            let other = compiler.namespaces.find_value(
+                *namespace_id,
+                *name,
+            ).ok_or(CompileError::NotDefined {
+                namespace_id: *namespace_id,
+                name: *name,
+                dependant_name: Identifier {
+                    pos: pos.clone(),
+                    name: *name,
+                },
+            })?;
+
+            match other {
+                CompileMemberId::Poison =>
+                    Err(CompileError::Poison),
+                CompileMemberId::Constant(constant_id) => {
+                    Ok(Some(super::resolve_constant_unit(
+                        compiler,
+                        constant_id,
+                        reqursion_guard,
+                    )?))
+                },
+                _ => Err(CompileError::InvalidKind {
+                    at: pos.clone(),
+                    expected_kind: format!("constant"),
+                }),
             }
         }
         Expression::Literal {

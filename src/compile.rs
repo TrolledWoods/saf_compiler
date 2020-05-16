@@ -117,7 +117,11 @@ fn resolve_constant_unit(
     reqursion_guard.push(const_unit_id);
 
     // Try to interpret the expression
-    let value = match interp::interpret(compiler, expression)? {
+    let value = match interp::interpret(
+            compiler, 
+            expression,
+            reqursion_guard,
+            )? {
         Some(value) => value,
         None => unimplemented!("TODO: Error for a constant expression not returning a value"),
     };
@@ -597,6 +601,7 @@ fn calc_type_def_req(
             let size = match interp::interpret(
                 compiler,
                 size,
+                &mut Vec::new(),
             )? {
                 Some(value) => {
                     value.expect_u64()? as usize
