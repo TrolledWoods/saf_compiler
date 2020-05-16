@@ -69,6 +69,12 @@ impl Parser<'_> {
 
 #[derive(Debug)]
 pub enum CompilationUnit {
+    Constant {
+        pos: SourcePos,
+        namespace_id: usize,
+        name: Identifier,
+        expression: Expression,
+    },
     TypeDefinition {
         pos: SourcePos,
         namespace_id: usize,
@@ -99,7 +105,14 @@ pub fn parse_file(
         use TokenKind::*;
         match token.kind {
             Keyword(KeywordKind::TypeDef) |
-            Keyword(KeywordKind::Alias) => add_comp_unit(parse_type_def(&mut parser, namespace_id)?),
+            Keyword(KeywordKind::Alias) => 
+                add_comp_unit(
+                    parse_type_def(&mut parser, namespace_id)?
+                ),
+            Keyword(KeywordKind::Const) => 
+                add_comp_unit(
+                    parse_constant_def(&mut parser, namespace_id)?
+                ),
             _ => return Err(ParseError::InvalidToken {
                 pos: token.pos(parser.file()),
                 kind: token.kind,
@@ -113,6 +126,58 @@ pub fn parse_file(
     }
 
     Ok(namespace_id)
+}
+
+fn parse_constant_def(
+    parser: &mut Parser<'_>,
+    namespace_id: usize,
+) -> ParseResult<CompilationUnit> {
+    let pos = parse_kind(
+        parser,
+        KeywordKind::Const,
+        |_| unreachable!("Don't call the parse_constant_def function when you do not have the 'const' keyword, please"),
+    )?;
+
+    let name = parse_identifier(
+        parser,
+        |_| format!("Expected identifier, constant definitions come in the form ``const [name] = [expression];``"),
+    )?;
+    
+    let const_type = if try_parse_kind(
+        parser,
+        TokenKind::Declaration,
+    )? {
+        Some(parse_type(
+            parser,
+            namespace_id,
+        )?)
+    } else {
+        None
+    };
+
+    parse_kind(
+        parser,
+        TokenKind::AssignmentOperator(""),
+        |_| format!("Expected '=' in constant"),
+    )?;
+
+    let expression = parse_expression(
+        parser,
+        namespace_id,
+    )?;
+
+    parse_kind(
+        parser,
+        TokenKind::Terminator,
+        |_| format!("Expected ';' at the end of constant definition"),
+    )?;
+
+    Ok(CompilationUnit::Constant {
+        pos,
+        namespace_id,
+        name,
+        expression,
+    })
 }
 
 const TYPE_DEF_FORM: &str = r#"

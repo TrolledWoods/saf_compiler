@@ -7,6 +7,7 @@ use crate::tiny_string::TinyString;
 use crate::vec_top::{ VecTop, Index };
 use crate::parser::{ SourcePos, Identifier };
 use crate::parser::ast::{
+    Expression,
     TypeExpression,
     PrimitiveKind,
 };
@@ -39,6 +40,7 @@ macro_rules! debug {
 
 pub struct Compiler {
     named_types: RwLock<Vec<TypeUnit>>,
+    constants: RwLock<Vec<ConstantUnit>>,
     type_definitions: RwLock<Vec<TypeDef>>,
     unique_type_ctr: AtomicUsize,
 
@@ -60,6 +62,7 @@ impl Compiler {
         };
 
         Compiler {
+            constants: RwLock::new(Vec::new()),
             named_types: RwLock::new(Vec::new()),
             type_definitions: RwLock::new(types),
             namespaces: Namespaces::new(),
@@ -79,6 +82,54 @@ impl Compiler {
     ) {
         self.ready_to_compile.lock().unwrap().push(ready);
     }
+}
+
+/// Resolved a constant unit, and returns a clone of the
+/// result. The fact that it's a clone might be bad,
+/// but I'm not sure what else to do, to be honest
+fn resolve_constant_unit(
+    compiler: &Compiler,
+    const_unit_id: usize,
+    reqursion_guard: &mut Vec<usize>,
+) -> Result<
+    interp::Value,
+    CompileError
+> {
+    let constants = compiler.constants.read().unwrap();
+    let ConstantUnit {
+        expression,
+        resolved,
+    } = &constants[const_unit_id];
+
+    // See if it is already resolved.
+    let resolved_lock = resolved.read().unwrap();
+    if let Some(value) = &*resolved_lock {
+        return Ok(value.clone());
+    } 
+    drop(resolved_lock);
+
+    if reqursion_guard
+            .iter().find(|v| **v == const_unit_id).is_some() {
+        unimplemented!("TODO: Circular error");
+    }
+
+    // Add oneself to the reqursion guard
+    reqursion_guard.push(const_unit_id);
+
+    // Try to interpret the expression
+    let value = match interp::interpret(compiler, expression)? {
+        Some(value) => value,
+        None => unimplemented!("TODO: Error for a constant expression not returning a value"),
+    };
+    let mut resolved_lock = resolved.write().unwrap();
+    let clone = value.clone();
+    *resolved_lock = Some(value);
+    drop(resolved_lock);
+
+    // Remove oneself from the reqursion_guard
+    reqursion_guard.pop();
+
+    Ok(clone)
 }
 
 /// Compiles things that are "ready for compilation"
@@ -138,8 +189,45 @@ pub fn compile_ready(
                 }?;
 
             }
-            Constant(id) => 
-                unimplemented!("TODO: Constants"),
+            Constant(id) => {
+                let mut reqursion_guard = Vec::new();
+                match resolve_constant_unit(
+                    compiler,
+                    id,
+                    &mut reqursion_guard,
+                ) {
+                    Ok(value) => {
+                        debug!(
+                            "Resolved constant {:?} to {:?}", 
+                            id,
+                            value,
+                        );
+                        Ok(value)
+                    }
+                    Err(CompileError::NotDefined {
+                        namespace_id,
+                        name,
+                        dependant_name,
+                    }) => {
+                        let deps 
+                        = compiler.namespaces.add_dependency(
+                            namespace_id,
+                            name,
+                            dependant_name.pos.clone(),
+                            CompileMemberId::NamedType(id),
+                        );
+                        if let Some(value) = deps {
+                            compiler.add_ready_to_compile(
+                                value
+                            );
+                        }
+
+                        // Just skip this one for now
+                        continue;
+                    }
+                    Err(err) => Err(err),
+                }?;
+            }
         }
     }
 
@@ -181,6 +269,37 @@ pub fn calc_type_id(
     id
 }
 
+pub fn add_constant(
+    compiler: &Compiler,
+    namespace_id: usize,
+    name: Identifier,
+    expression: Expression,
+) -> Result<usize, CompileError> {
+    let mut constants = compiler.constants.write().unwrap();
+    let const_id = constants.len();
+    constants.push(ConstantUnit {
+        expression,
+        resolved: RwLock::new(None),
+    });
+    drop(constants);
+
+    let dependants = compiler.namespaces.insert_member(
+        namespace_id,
+        name,
+        CompileMemberId::Constant(const_id),
+    )?;
+
+    for (_pos, dependant) in dependants {
+        compiler.add_ready_to_compile(dependant);
+    }
+
+    compiler.add_ready_to_compile(
+        CompileMemberId::Constant(const_id)
+    );
+
+    Ok(const_id)
+}
+
 pub fn add_named_type(
     compiler: &Compiler,
     namespace_id: usize,
@@ -212,46 +331,9 @@ pub fn add_named_type(
         compiler.add_ready_to_compile(dependant);
     }
 
-    // Try to get the type definition
-    // If any of the dependencies are not defined,
-    // it will wait until(if) that dependency
-    // is defined.
-    let mut req_guard = Vec::new();
-    let mut type_defs = compiler.type_definitions.write().unwrap();
-    match calc_type_units_type_def(
-        compiler,
-        &mut *type_defs,
-        named_type_id,
-        VecTop::at_top(&mut req_guard),
-        0,
-        true,
-    ) {
-        Ok(value) => {
-            debug!(
-                "Resolved type unit {:?} to {}", 
-                named_type_id,
-                value,
-            );
-        }
-        Err(CompileError::NotDefined {
-            namespace_id,
-            name,
-            dependant_name,
-        }) => {
-            let deps = compiler.namespaces.add_dependency(
-                namespace_id,
-                name,
-                dependant_name.pos.clone(),
-                CompileMemberId::NamedType(named_type_id),
-            );
-            if let Some(value) = deps {
-                compiler.add_ready_to_compile(
-                    value
-                );
-            }
-        }
-        Err(err) => return Err(err),
-    }
+    compiler.add_ready_to_compile(
+        CompileMemberId::NamedType(named_type_id)
+    );
 
     Ok(named_type_id as usize)
 }
@@ -570,6 +652,11 @@ pub enum CompileMemberId {
     Poison,
     NamedType(usize),
     Constant(usize),
+}
+
+struct ConstantUnit {
+    expression: Expression,
+    resolved: RwLock<Option<interp::Value>>,
 }
 
 struct TypeUnit {

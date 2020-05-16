@@ -37,6 +37,19 @@ fn main() {
                         is_unique,
                     ).unwrap();
                 }
+                Constant {
+                    pos,
+                    namespace_id,
+                    name,
+                    expression,
+                } => {
+                    compile::add_constant(
+                        &compiler,
+                        namespace_id,
+                        name,
+                        expression,
+                    ).unwrap();
+                }
             }
         },
     ).unwrap();
