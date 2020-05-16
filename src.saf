@@ -1,1 +1,4 @@
-alias Test = [6] i32;
+// const MoreTesting = 1 + 2;
+alias Test5 = [25 - 23] Test;
+alias Test = [5] i32;
+alias Test2 = [5 - 2] *Test2;

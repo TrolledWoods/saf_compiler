@@ -274,10 +274,17 @@ pub enum CompileError {
         // defined as well.
         expected_kind: String
     },
+    ExpectedValue {
+        at: SourcePos,
+    },
     InvalidValueType {
         at: SourcePos,
-        expected_type: usize,
-        got_type: usize,
+        expected_type: TypeDef,
+    },
+    ValueDoesntFit {
+        pos: SourcePos,
+        value: interp::Value,
+        cramming_into: usize,
     },
     ExpectedType {
         at: SourcePos,
@@ -509,16 +516,8 @@ fn calc_type_def_req(
                 compiler,
                 size,
             )? {
-                Some(interp::InterpreterValue {
-                    type_id: INT_64_ID,
-                    definition,
-                }) => {
-                    match definition[0] {
-                        interp::PrimitiveValue::Int64(val) => {
-                            val as usize
-                        },
-                        _ => unreachable!("type_id is INT_64_ID but the definition is not"),
-                    }
+                Some(value) => {
+                    value.expect_u64()? as usize
                 },
                 _ => {
                     panic!("TODO: Invalid fixed array size type, expected i64");

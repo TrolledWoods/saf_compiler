@@ -28,6 +28,29 @@ pub enum Expression {
     },
 }
 
+impl Expression {
+    pub fn pos(&self) -> SourcePos {
+        use Expression::*;
+        match self {
+            NamedValue {
+                pos, ..
+            } => pos.clone(),
+            Block {
+                pos, ..
+            } => pos.clone(),
+            Literal {
+                pos, ..
+            } => pos.clone(),
+            Operation {
+                pos, ..
+            } => pos.clone(),
+            FunctionCall {
+                pos, ..
+            } => pos.clone(),
+        }
+    }
+}
+
 #[derive(Debug, Clone, Copy, Hash, PartialEq, Eq)]
 pub enum PrimitiveKind {
     Float32,
