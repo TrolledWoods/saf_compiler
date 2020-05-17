@@ -124,6 +124,10 @@ fn try_operation(
         ("-u", Int(a), Int(b)) => Int(a - b),
         ("-i", Int(a), Int(b)) => Int((a as i64 - b as i64) as u64),
 
+        ("*", Int(a), Int(b)) => Int(a * b),
+        ("/", Int(a), Int(b)) => Int(a / b),
+        ("%", Int(a), Int(b)) => Int(a % b),
+
         // TODO: Since operator overoading will be a thing, see
         // if there are values that are overloaded like that.
         // For now there are no generics though, so that is not 

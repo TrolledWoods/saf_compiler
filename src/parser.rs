@@ -10,7 +10,12 @@ use lexer::{
     Lexer, 
     LexerError 
 };
-use ast::{ PrimitiveKind, TypeExpression, Expression };
+use ast::{ 
+    PrimitiveKind, 
+    TypeExpression, 
+    Expression,
+    Statement,
+};
 use crate::IdCounter;
 use keyword::Keyword as KeywordKind;
 use crate::tiny_string::TinyString;
@@ -535,7 +540,21 @@ fn parse_expression_value(
             }
         }
         TokenKind::Bracket('(') => {
-            unimplemented!("TODO: Expression blocks");
+            let block = parse_code_block(
+                parser,
+                namespace_id,
+            )?;
+            println!("{:?}", block);
+            match block {
+                Expression::Block {
+                    return_value: Some(return_value),
+                    code,
+                    pos,
+                } if code.len() == 0 => {
+                    *return_value
+                }
+                other => other,
+            }
         }
         TokenKind::Literal(value) => {
             parser.expect_eat_token().unwrap();
@@ -562,10 +581,120 @@ fn parse_expression_value(
     Ok(expression)
 }
 
+fn parse_code_block(
+    parser: &mut Parser<'_>,
+    namespace_id: usize,
+) -> ParseResult<Expression> {
+    let pos = parse_kind(
+        parser,
+        TokenKind::Bracket('('),
+        |_| unreachable!("Don't call parse_code_block on anything other than a '(', please"),
+    )?;
+
+    let mut code = Vec::new();
+    let mut return_value = None;
+
+    loop {
+        use TokenKind::*;
+        let token = parser.expect_peek_token(0)?;
+        match &token.kind {
+            Keyword(KeywordKind::Let) => {
+                // This is a declaration.
+                parser.expect_eat_token().unwrap(); 
+
+                let name = parse_identifier(
+                    parser, 
+                    |_| format!("Expected an identifier")
+                )?;
+
+                let var_type = if try_parse_kind(
+                    parser,
+                    Declaration,
+                )? {
+                    // The type
+                    Some(parse_type(parser, namespace_id)?)
+                } else {
+                    None
+                };
+
+                parse_kind(
+                    parser,
+                    AssignmentOperator(""),
+                    |_| format!("Expected '=', ``let [name] (*optionally : [type]) = [expression];``"),
+                )?;
+
+                let value = parse_expression(parser, namespace_id)?;
+
+                code.push(Statement::Declaration {
+                    declaring: name,
+                    var_type,
+                    value,
+                });
+            }
+            Bracket(')') => break,
+            _ => {
+                let first = parse_expression(parser, namespace_id)?;
+                let token = parser.expect_peek_token(0)?;
+                match &token.kind {
+                    Bracket(')') => {
+                        parser.expect_eat_token().unwrap();
+
+                        // If the expression was a non expressino
+                        // block, then we don't want to set our
+                        // return value to it.
+                        if let Expression::Block {
+                            return_value: None,
+                            ..
+                        } = &first {
+                            code.push(Statement::Expression(first));
+                            break;
+                        } else {
+                            return_value = Some(first);
+                            break;
+                        }
+                    },
+                    Terminator => {
+                        parser.expect_eat_token().unwrap();
+                        code.push(Statement::Expression(first));
+                    }
+                    AssignmentOperator(operator) => {
+                        parser.expect_eat_token().unwrap();
+
+                        let value = parse_expression(
+                            parser, 
+                            namespace_id,
+                        )?;
+
+                        parse_kind(
+                            parser,
+                            Terminator,
+                            |_| format!("Expected ';' at the end of assignment."),
+                        )?;
+
+                        code.push(Statement::Assignment {
+                            assigning: first,
+                            operator,
+                            value,
+                        });
+                    }
+                    _ => unimplemented!("TODO: Invalid token when parsing block thingy"),
+                };
+            }
+        }
+    }
+
+    Ok(Expression::Block {
+        pos,
+        code,
+        return_value: return_value.map(|v| Box::new(v)),
+    })
+}
+
 fn parse_pointer(
     parser: &mut Parser<'_>,
     namespace_id: usize,
-) -> Result<TypeExpression, ParseError> {
+) -> ParseResult<TypeExpression> {
+    use TokenKind::*;
     let token = parser.expect_eat_token()?;
     let start = token.start;
     match token.kind {
@@ -577,7 +706,6 @@ fn parse_pointer(
         ),
     }
 
-    use TokenKind::*;
     let token = parser.expect_peek_token(0)?;
     let start = token.start;
 
@@ -662,7 +790,7 @@ fn try_parse_kind(
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub struct Identifier {
     pub pos: SourcePos,
     pub name: TinyString,

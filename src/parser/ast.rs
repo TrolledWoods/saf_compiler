@@ -1,7 +1,23 @@
 use super::lexer::{ SourcePos, Literal };
+use super::Identifier;
 use crate::tiny_string::TinyString;
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
+pub enum Statement {
+    Declaration {
+        declaring: Identifier, 
+        var_type: Option<TypeExpression>, 
+        value: Expression,
+    },
+    Assignment {
+        assigning: Expression,
+        operator: &'static str,
+        value: Expression,
+    },
+    Expression(Expression),
+}
+
+#[derive(Debug, Clone)]
 pub enum Expression {
     NamedValue {
         pos: SourcePos,
@@ -10,7 +26,8 @@ pub enum Expression {
     },
     Block {
         pos: SourcePos,
-        // code_block: Vec<Statement>,
+        code: Vec<Statement>,
+        return_value: Option<Box<Expression>>,
     },
     Literal {
         pos: SourcePos,
@@ -59,7 +76,7 @@ pub enum PrimitiveKind {
     Int64,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 pub enum TypeExpression {
     NamedCollection(Vec<(TinyString, TypeExpression, Option<Expression>)>),
     Pointer {

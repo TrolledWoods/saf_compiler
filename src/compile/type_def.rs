@@ -85,8 +85,8 @@ impl TypeDef {
                 // a lot more efficient, but it should
                 // be fine for now. Especially inefficient
                 // for large size values.
-                assert!(*size <= 50, 
-                    "Cannot do too big fixed arrays for now");
+                // assert!(*size <= 50, 
+                //    "Cannot do too big fixed arrays for now");
                 for _ in 0..*size {
                     content_type.calc_repr(data);
                 }

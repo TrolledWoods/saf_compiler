@@ -1,3 +1,23 @@
-const TEST2 = TEST3 + 5 - 2 + 5;
-const TEST = 5;
-const TEST3 = TEST + 5 - 2 + 5;
+// ``String`` isn't a thing yet, so we do this to pretend
+// that it is
+type String = {};
+
+type Person = {
+	name: String,
+	age: i32,
+
+	friends: [?] *mut Person,
+};
+
+const employee_cache_size = (
+	let x: i64 = 5;
+	50 + x * 10
+);
+
+type Employee = {
+	// The actual person
+	person: Person,
+
+	coworker_cache: [employee_cache_size] *null mut Employee,
+	coworkers: [?] *mut Employee,
+};
