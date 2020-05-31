@@ -1,23 +1,16 @@
-// ``String`` isn't a thing yet, so we do this to pretend
-// that it is
-type String = {};
+const Hello = 5;
 
-type Person = {
-	name: String,
-	age: i32,
+// An array with "Other" elements.
+type Test = [Other] f32;
 
-	friends: [?] *mut Person,
-};
+// These are structs.
+// They are also the same type, because the recursion is the same!
+// (that's what I mean by a overly complicated type system,
+// won't do it like that in the next rewrite)
+alias Hello = { *Hello, f32 };
+alias Hello2 = { *Hello2, f32 };
 
-const employee_cache_size = (
-	let x: i64 = 5;
-	50 + x * 10
-);
+// This type cannot be sized.
+// alias Wow = { Wow, f32, f32 };
 
-type Employee = {
-	// The actual person
-	person: Person,
-
-	coworker_cache: [employee_cache_size] *null mut Employee,
-	coworkers: [?] *mut Employee,
-};
+const Other = Hello * 2 + 3;
